@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自然實驗設計：投石器物理模擬</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f3f4f6;
+        }
+        canvas {
+            touch-action: none; /* Prevent scrolling when touching canvas */
+        }
+        /* Custom scrollbar for data table */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-6 text-gray-800 flex flex-col items-center">
+
+    <header class="w-full max-w-6xl mb-6 text-center">
+        <h1 class="text-3xl md:text-4xl font-bold text-blue-800 mb-2">🚀 投石器物理模擬實驗室</h1>
+        <p class="text-gray-600">設定你的操縱變因與控制變因，發射並收集數據，最後將結果繪製成折線圖吧！</p>
+    </header>
+
+    <main class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow">
+        
+        <!-- Left Panel: Controls -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 flex flex-col space-y-6 col-span-1">
+            <h2 class="text-xl font-bold text-gray-700 border-b pb-2">⚙️ 變因設定面板</h2>
+            
+            <!-- Angle Slider -->
+            <div class="space-y-2">
+                <div class="flex justify-between items-center">
+                    <label for="angle" class="font-medium text-gray-700">發射角度 (度)</label>
+                    <span id="angleValue" class="text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded">45°</span>
+                </div>
+                <input type="range" id="angle" min="10" max="85" value="45" step="1" 
+                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                <p class="text-xs text-gray-400">決定拋射的仰角。</p>
+            </div>
+
+            <!-- Tension Slider -->
+            <div class="space-y-2">
+                <div class="flex justify-between items-center">
+                    <label for="tension" class="font-medium text-gray-700">彈力大小 (相對值)</label>
+                    <span id="tensionValue" class="text-green-600 font-bold bg-green-50 px-2 py-1 rounded">5</span>
+                </div>
+                <input type="range" id="tension" min="1" max="10" value="5" step="1" 
+                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600">
+                <p class="text-xs text-gray-400">模擬橡皮筋拉長程度，影響初始動能。</p>
+            </div>
+
+            <!-- Mass Slider -->
+            <div class="space-y-2">
+                <div class="flex justify-between items-center">
+                    <label for="mass" class="font-medium text-gray-700">拋體質量 (kg)</label>
+                    <span id="massValue" class="text-purple-600 font-bold bg-purple-50 px-2 py-1 rounded">2</span>
+                </div>
+                <input type="range" id="mass" min="1" max="10" value="2" step="0.5" 
+                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600">
+                <p class="text-xs text-gray-400">越重的物體需要越大的力量才能加速。</p>
+            </div>
+
+            <div class="pt-4 flex flex-col space-y-3 mt-auto">
+                <button id="launchBtn" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md transition transform hover:-translate-y-0.5 active:translate-y-0">
+                    🔥 發射投石器
+                </button>
+                <button id="resetCanvasBtn" class="w-full py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium rounded-xl transition">
+                    🧹 清除畫面上軌跡
+                </button>
+                <div class="flex items-center space-x-2 pt-2 border-t mt-2">
+                    <input type="checkbox" id="autoFollow" checked class="w-4 h-4 text-blue-600 rounded cursor-pointer">
+                    <label for="autoFollow" class="text-sm text-gray-700 cursor-pointer font-medium">發射時鏡頭自動追蹤</label>
+                </div>
+                <div class="flex items-center space-x-2 pt-2 mt-1 mb-2">
+                    <input type="checkbox" id="enableRandomError" checked class="w-4 h-4 text-orange-500 rounded cursor-pointer">
+                    <label for="enableRandomError" class="text-sm text-gray-700 cursor-pointer font-medium text-orange-700">加入真實環境誤差 (模擬微小變數)</label>
+                </div>
+                <button id="resetViewBtn" class="w-full py-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-600 font-medium rounded-xl transition shadow-sm">
+                    🎯 重置視角 (置中)
+                </button>
+            </div>
+        </div>
+
+        <!-- Center & Right Panel: Canvas & Data -->
+        <div class="col-span-1 lg:col-span-2 flex flex-col space-y-6">
+            
+            <!-- Simulation Canvas -->
+            <div class="bg-white p-2 rounded-2xl shadow-lg border border-gray-100 relative h-[400px] md:h-[450px]">
+                <canvas id="simCanvas" class="w-full h-full rounded-xl bg-blue-50"></canvas>
+                <!-- Canvas Overlay Info -->
+                <div class="absolute top-4 left-4 bg-white/80 backdrop-blur text-xs px-3 py-2 rounded-lg border border-gray-200 pointer-events-none">
+                    <span class="block text-gray-500 font-semibold mb-1">即時狀態</span>
+                    <div>飛行距離: <span id="liveDistance" class="font-bold text-gray-800">0.00</span> m</div>
+                    <div>最高高度: <span id="liveHeight" class="font-bold text-gray-800">0.00</span> m</div>
+                </div>
+                <!-- Controls Hint -->
+                <div class="absolute top-4 right-4 bg-white/80 backdrop-blur text-xs px-3 py-2 rounded-lg border border-gray-200 pointer-events-none text-gray-600 shadow-sm flex items-center space-x-1">
+                    <span class="text-lg">🖱️</span>
+                    <span>支援拖曳平移與滾輪縮放</span>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 flex-grow flex flex-col">
+                <div class="flex justify-between items-end mb-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-gray-700">📊 實驗數據紀錄</h2>
+                        <p class="text-sm text-gray-500">將下方數據抄寫到學習單，並繪製成坐標圖。</p>
+                    </div>
+                    <button id="clearDataBtn" class="text-sm px-3 py-1 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg transition">
+                        清空數據
+                    </button>
+                </div>
+                
+                <div class="overflow-x-auto overflow-y-auto max-h-[200px] custom-scrollbar border rounded-xl">
+                    <table class="min-w-full text-center text-sm">
+                        <thead class="bg-gray-100 sticky top-0">
+                            <tr>
+                                <th class="px-4 py-3 text-gray-600 font-semibold">次數</th>
+                                <th class="px-4 py-3 text-blue-600 font-semibold">角度 (°)</th>
+                                <th class="px-4 py-3 text-green-600 font-semibold">彈力</th>
+                                <th class="px-4 py-3 text-purple-600 font-semibold">質量 (kg)</th>
+                                <th class="px-4 py-3 text-red-600 font-semibold border-l-2 border-gray-200">飛行距離 (m)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody" class="divide-y divide-gray-100">
+                            <!-- Data rows will be injected here -->
+                            <tr id="emptyDataRow">
+                                <td colspan="5" class="px-4 py-8 text-gray-400 italic">尚未有實驗數據，請進行發射。</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // DOM Elements
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const angleSlider = document.getElementById('angle');
+        const tensionSlider = document.getElementById('tension');
+        const massSlider = document.getElementById('mass');
+        
+        const angleValue = document.getElementById('angleValue');
+        const tensionValue = document.getElementById('tensionValue');
+        const massValue = document.getElementById('massValue');
+        
+        const launchBtn = document.getElementById('launchBtn');
+        const resetCanvasBtn = document.getElementById('resetCanvasBtn');
+        const clearDataBtn = document.getElementById('clearDataBtn');
+        const resetViewBtn = document.getElementById('resetViewBtn');
+        const autoFollowCb = document.getElementById('autoFollow');
+        const enableRandomErrorCb = document.getElementById('enableRandomError');
+        
+        const dataTableBody = document.getElementById('dataTableBody');
+        const emptyDataRow = document.getElementById('emptyDataRow');
+        const liveDistance = document.getElementById('liveDistance');
+        const liveHeight = document.getElementById('liveHeight');
+
+        // State Variables
+        let isAnimating = false;
+        let animationId;
+        let trails = []; // Store past trajectories
+        let trialCount = 0;
+        
+        // Physics Constants
+        const G = 9.81; // Gravity
+        
+        // Camera & Coordinate System
+        const pixelsPerMeter = 10; // Base Scale: 10 pixels = 1 meter
+        let camera = { x: 0, y: 0, scale: 1 };
+        let originX = 80;  // Pixels from left for x=0
+        let originY = 0;   // Will be set to near bottom of canvas
+
+        // Interaction State
+        let isDragging = false;
+        let lastMouse = { x: 0, y: 0 };
+        let initialPinchDist = null;
+        canvas.style.cursor = 'grab';
+
+        // Current Projectile State
+        let currentProj = null;
+
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            originY = canvas.height - 60; // Ground level is 60px from bottom
+            drawStaticEnvironment();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        // Convert World Coordinates (meters) to Screen Coordinates (pixels)
+        function w2s(wx, wy) {
+            return {
+                x: originX + (wx * pixelsPerMeter * camera.scale) + camera.x,
+                y: originY - (wy * pixelsPerMeter * camera.scale) + camera.y
+            };
+        }
+
+        function updateUI() {
+            angleValue.innerText = angleSlider.value + '°';
+            tensionValue.innerText = tensionSlider.value;
+            massValue.innerText = massSlider.value;
+            if (!isAnimating) drawStaticEnvironment();
+        }
+
+        angleSlider.addEventListener('input', updateUI);
+        tensionSlider.addEventListener('input', updateUI);
+        massSlider.addEventListener('input', updateUI);
+
+        function drawStaticEnvironment() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Sky background (Static)
+            let gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, "#e0f2fe");
+            gradient.addColorStop(1, "#f8fafc");
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Ground (Dynamic based on camera)
+            const groundStart = w2s(-500, 0);
+            ctx.fillStyle = "#84cc16"; // lime-500
+            ctx.fillRect(0, groundStart.y, canvas.width, canvas.height - groundStart.y + 500);
+            
+            // Draw Distance Markers
+            ctx.fillStyle = "#3f6212";
+            ctx.strokeStyle = "#3f6212";
+            ctx.font = "12px Arial";
+            ctx.textAlign = "center";
+            
+            let step = 10;
+            if (camera.scale < 0.5) step = 20;
+            if (camera.scale < 0.2) step = 50;
+
+            for(let m = -10; m <= 500; m += step) {
+                let p = w2s(m, 0);
+                if (p.x > -50 && p.x < canvas.width + 50) {
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(p.x, p.y + 8);
+                    ctx.stroke();
+                    ctx.fillText(m + "m", p.x, p.y + 24);
+                }
+            }
+
+            // Draw past trails
+            trails.forEach(trail => {
+                ctx.beginPath();
+                ctx.strokeStyle = "rgba(156, 163, 175, 0.6)"; // gray-400
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                for(let i=0; i<trail.length; i++) {
+                    let p = w2s(trail[i].x, trail[i].y);
+                    if(i===0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // Draw landing mark & text
+                if(trail.length > 0) {
+                    let lastP = w2s(trail[trail.length-1].x, trail[trail.length-1].y);
+                    ctx.fillStyle = "#9ca3af";
+                    ctx.beginPath();
+                    ctx.arc(lastP.x, lastP.y, 4, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.fillStyle = "#6b7280";
+                    ctx.font = "10px Arial";
+                    ctx.fillText(trail[trail.length-1].x.toFixed(1) + "m", lastP.x, lastP.y + 15);
+                }
+            });
+
+            drawCatapult();
+        }
+
+        function drawCatapult() {
+            const angleDeg = parseFloat(angleSlider.value);
+            const angleRad = angleDeg * (Math.PI / 180);
+            
+            // Catapult Dimensions (in meters)
+            const pivotY = 1.5; 
+            const armLengthMeters = 3.5;
+            
+            const pivot = w2s(0, pivotY);
+
+            // Base
+            ctx.fillStyle = "#78350f";
+            ctx.beginPath();
+            const bLeft = w2s(-1.5, 0);
+            const bRight = w2s(1.5, 0);
+            const pTopLeft = w2s(-0.5, pivotY);
+            const pTopRight = w2s(0.5, pivotY);
+            
+            ctx.moveTo(bLeft.x, bLeft.y);
+            ctx.lineTo(bRight.x, bRight.y);
+            ctx.lineTo(pTopRight.x, pTopRight.y);
+            ctx.lineTo(pTopLeft.x, pTopLeft.y);
+            ctx.fill();
+
+            // Arm
+            const endX = armLengthMeters * Math.cos(angleRad);
+            const endY = pivotY + armLengthMeters * Math.sin(angleRad);
+            const endScreen = w2s(endX, endY);
+            
+            ctx.strokeStyle = "#b45309";
+            ctx.lineWidth = 6 * Math.max(0.5, camera.scale);
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(pivot.x, pivot.y);
+            ctx.lineTo(endScreen.x, endScreen.y);
+            ctx.stroke();
+
+            // Projectile in holder (if not animating)
+            if (!isAnimating) {
+                ctx.fillStyle = "#3b82f6";
+                ctx.beginPath();
+                ctx.arc(endScreen.x, endScreen.y, 7 * Math.max(0.5, camera.scale), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#1e3a8a";
+                ctx.lineWidth = 2 * Math.max(0.5, camera.scale);
+                ctx.stroke();
+            }
+        }
+
+        function launch() {
+            if (isAnimating) return;
+            
+            const baseAngle = parseFloat(angleSlider.value);
+            const baseTension = parseFloat(tensionSlider.value);
+            const mass = parseFloat(massSlider.value);
+            
+            // 模擬真實環境的隨機誤差 (手部抖動、風阻等)
+            let actualAngle = baseAngle;
+            let actualTension = baseTension;
+            
+            if (enableRandomErrorCb && enableRandomErrorCb.checked) {
+                // 角度誤差：正負 1.5 度
+                actualAngle += (Math.random() * 3 - 1.5);
+                // 彈力(初速)誤差：正負 3%
+                actualTension += baseTension * (Math.random() * 0.06 - 0.03);
+            }
+            
+            // Physics logic
+            const energyScaling = 300; // Adjusted for better screen bounds initially
+            const kineticEnergy = actualTension * energyScaling;
+            const initialVelocity = Math.sqrt(kineticEnergy / mass);
+            
+            const angleRad = actualAngle * (Math.PI / 180);
+            const armLengthMeters = 3.5;
+            const pivotY = 1.5;
+            const startX = armLengthMeters * Math.cos(angleRad);
+            const startY = pivotY + armLengthMeters * Math.sin(angleRad);
+
+            currentProj = {
+                startX: startX,
+                startY: startY,
+                v0: initialVelocity,
+                v0x: initialVelocity * Math.cos(angleRad),
+                v0y: initialVelocity * Math.sin(angleRad),
+                t: 0,
+                path: [], // Stores {x, y} in meters
+                maxH: 0
+            };
+
+            isAnimating = true;
+            launchBtn.disabled = true;
+            launchBtn.classList.add("opacity-50", "cursor-not-allowed");
+            
+            // Auto-reset view slightly before launch if follow is on
+            if(autoFollowCb.checked) {
+                camera = { x: 0, y: 0, scale: 1 };
+            }
+            
+            animateLoop();
+        }
+
+        function animateLoop() {
+            currentProj.t += 0.04; // Time step
+            let t = currentProj.t;
+
+            // Calculate physics in meters
+            let xMeters = currentProj.startX + currentProj.v0x * t;
+            let yMeters = currentProj.startY + (currentProj.v0y * t) - (0.5 * G * t * t);
+
+            // Ground Collision
+            if (yMeters <= 0) {
+                yMeters = 0;
+                xMeters = currentProj.startX + currentProj.v0x * (currentProj.v0y + Math.sqrt(currentProj.v0y*currentProj.v0y + 2*G*currentProj.startY)) / G; // Exact range formula
+            }
+
+            if (yMeters > currentProj.maxH) currentProj.maxH = yMeters;
+            currentProj.path.push({x: xMeters, y: yMeters});
+
+            // Update live UI
+            liveDistance.innerText = xMeters.toFixed(2);
+            liveHeight.innerText = currentProj.maxH.toFixed(2);
+
+            // Auto-Follow Camera Logic
+            if (autoFollowCb.checked) {
+                const screenPos = w2s(xMeters, yMeters);
+                if (screenPos.x > canvas.width * 0.6) {
+                    camera.x -= (screenPos.x - canvas.width * 0.6) * 0.1;
+                }
+                if (screenPos.y < canvas.height * 0.3) {
+                    camera.y += (canvas.height * 0.3 - screenPos.y) * 0.1;
+                }
+                if (screenPos.y > canvas.height * 0.8 && yMeters > 0) {
+                    camera.y -= (screenPos.y - canvas.height * 0.8) * 0.1;
+                }
+            }
+
+            drawStaticEnvironment();
+
+            // Draw current trajectory
+            ctx.beginPath();
+            ctx.strokeStyle = "#ef4444"; // red-500
+            ctx.lineWidth = 3;
+            for(let i=0; i<currentProj.path.length; i++) {
+                let p = w2s(currentProj.path[i].x, currentProj.path[i].y);
+                if(i===0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+
+            // Draw Projectile
+            let currentScreenPos = w2s(xMeters, yMeters);
+            ctx.fillStyle = "#3b82f6";
+            ctx.beginPath();
+            ctx.arc(currentScreenPos.x, currentScreenPos.y, 7 * Math.max(0.5, camera.scale), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#1e3a8a";
+            ctx.lineWidth = 2 * Math.max(0.5, camera.scale);
+            ctx.stroke();
+
+            // Check if animation ends
+            if (yMeters <= 0) {
+                isAnimating = false;
+                launchBtn.disabled = false;
+                launchBtn.classList.remove("opacity-50", "cursor-not-allowed");
+                trails.push(currentProj.path);
+                recordData(xMeters);
+                return;
+            }
+
+            animationId = requestAnimationFrame(animateLoop);
+        }
+
+        // Interactive Canvas Events (Drag & Zoom)
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMouse = { x: e.clientX, y: e.clientY };
+            canvas.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            camera.x += e.clientX - lastMouse.x;
+            camera.y += e.clientY - lastMouse.y;
+            lastMouse = { x: e.clientX, y: e.clientY };
+            autoFollowCb.checked = false; // Disable auto-follow on manual pan
+            if (!isAnimating) drawStaticEnvironment();
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = 1.1;
+            if (e.deltaY < 0) camera.scale *= zoomFactor;
+            else camera.scale /= zoomFactor;
+            
+            camera.scale = Math.max(0.1, Math.min(camera.scale, 5)); // Limit zoom
+            autoFollowCb.checked = false;
+            if (!isAnimating) drawStaticEnvironment();
+        });
+
+        // Touch Support for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                isDragging = false;
+                initialPinchDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (isDragging && e.touches.length === 1) {
+                camera.x += e.touches[0].clientX - lastMouse.x;
+                camera.y += e.touches[0].clientY - lastMouse.y;
+                lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                autoFollowCb.checked = false;
+                if (!isAnimating) drawStaticEnvironment();
+            } else if (e.touches.length === 2 && initialPinchDist) {
+                const dist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                camera.scale *= (dist / initialPinchDist);
+                camera.scale = Math.max(0.1, Math.min(camera.scale, 5));
+                initialPinchDist = dist;
+                autoFollowCb.checked = false;
+                if (!isAnimating) drawStaticEnvironment();
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) initialPinchDist = null;
+            if (e.touches.length === 0) isDragging = false;
+        });
+
+        // Button Listeners
+        launchBtn.addEventListener('click', launch);
+
+        resetCanvasBtn.addEventListener('click', () => {
+            if (isAnimating) return;
+            trails = [];
+            liveDistance.innerText = "0.00";
+            liveHeight.innerText = "0.00";
+            drawStaticEnvironment();
+        });
+
+        resetViewBtn.addEventListener('click', () => {
+            camera = { x: 0, y: 0, scale: 1 };
+            autoFollowCb.checked = true;
+            if (!isAnimating) drawStaticEnvironment();
+        });
+
+        clearDataBtn.addEventListener('click', () => {
+            dataTableBody.innerHTML = '';
+            if (emptyDataRow) {
+                dataTableBody.appendChild(emptyDataRow);
+                emptyDataRow.style.display = 'table-row';
+            } else {
+                 dataTableBody.innerHTML = `
+                    <tr id="emptyDataRow">
+                        <td colspan="5" class="px-4 py-8 text-gray-400 italic">尚未有實驗數據，請進行發射。</td>
+                    </tr>
+                `;
+            }
+            trialCount = 0;
+        });
+
+        function recordData(distance) {
+            trialCount++;
+            if (emptyDataRow) emptyDataRow.style.display = 'none';
+
+            const angle = angleSlider.value;
+            const tension = tensionSlider.value;
+            const mass = massSlider.value;
+
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-gray-50 transition";
+            tr.innerHTML = `
+                <td class="px-4 py-2 border-t">${trialCount}</td>
+                <td class="px-4 py-2 border-t font-medium">${angle}°</td>
+                <td class="px-4 py-2 border-t">${tension}</td>
+                <td class="px-4 py-2 border-t">${mass}</td>
+                <td class="px-4 py-2 border-t font-bold text-red-600 bg-red-50/30">${distance.toFixed(2)}</td>
+            `;
+            
+            dataTableBody.appendChild(tr);
+            dataTableBody.parentElement.parentElement.scrollTop = dataTableBody.parentElement.parentElement.scrollHeight;
+        }
+
+        // Initialize
+        window.onload = function() {
+            resizeCanvas();
+            updateUI();
+        };
+
+    </script>
+</body>
+</html>

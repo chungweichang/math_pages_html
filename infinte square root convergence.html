@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>無窮根號收斂視覺化 (Cobweb Plot) - AI 賦能版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        canvas { touch-action: none; cursor: move; }
+        .control-btn {
+            background-color: rgba(255, 255, 255, 0.9);
+            border: 1px solid #e5e7eb;
+            color: #374151;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.25rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.2s;
+            user-select: none;
+        }
+        .control-btn:hover {
+            background-color: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+        .control-btn:active {
+            transform: scale(0.95);
+        }
+        
+        /* Math Formula Styles */
+        .math-radical {
+            display: inline-flex;
+            align-items: flex-start;
+            margin-right: 2px;
+        }
+        .math-surd {
+            font-family: serif;
+            font-size: 1.2em;
+            line-height: 1;
+            margin-right: 2px;
+        }
+        .math-radicand {
+            border-top: 1.5px solid currentColor;
+            padding-top: 2px;
+            padding-left: 2px;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        /* AI Loading Animation */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #8b5cf6;
+            width: 20px;
+            height: 20px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Markdown formatting for AI Output */
+        .ai-output-text strong { color: #5b21b6; font-weight: 700; }
+        .ai-output-text p { margin-bottom: 0.5rem; }
+    </style>
+</head>
+<body class="bg-gray-50 flex flex-col h-screen overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-blue-600 text-white p-4 shadow-md flex-none z-20 flex justify-between items-center">
+        <h1 class="text-xl font-bold flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            無窮根號收斂演示 (Cobweb Plot)
+        </h1>
+        <div class="text-sm bg-blue-700 px-3 py-1 rounded-full flex items-center gap-1 border border-blue-500">
+            <span>Powered by Gemini</span>✨
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex flex-1 flex-col md:flex-row overflow-hidden relative">
+        
+        <!-- Controls & Data Panel -->
+        <div class="w-full md:w-1/3 p-6 bg-white border-r border-gray-200 overflow-y-auto flex-none z-10 shadow-lg md:shadow-none order-2 md:order-1 flex flex-col gap-6">
+            
+            <!-- Parameters Section -->
+            <div class="space-y-4">
+                <div class="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                    <label class="block text-sm font-bold text-gray-700 mb-2">設定常數 k (題目中的數字)</label>
+                    <div class="flex items-center gap-4">
+                        <input type="range" id="kSlider" min="1" max="100" value="2" step="1" class="w-full h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer">
+                        <span id="kValue" class="text-2xl font-bold text-blue-600 w-16 text-center">2</span>
+                    </div>
+                    <div class="flex justify-between text-xs text-gray-400 mt-1 px-1">
+                        <span>1</span>
+                        <span>50</span>
+                        <span>100</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 font-mono text-center bg-white/50 py-1 rounded">
+                        目標方程： x = √( <span id="eqK" class="font-bold text-blue-600">2</span> + x )
+                    </p>
+                </div>
+
+                <div class="flex gap-2">
+                    <button id="btnPrev" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-3 rounded shadow transition transform active:scale-95 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none" title="上一步">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                    <button id="btnStep" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded shadow transition transform active:scale-95 flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                        </svg>
+                        下一步
+                    </button>
+                    <button id="btnReset" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-3 rounded shadow transition transform active:scale-95 flex items-center justify-center" title="重算 (也會重置視角)">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="flex-none max-h-48 flex flex-col">
+                <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">運算過程 (迭代數值)</h3>
+                <div class="bg-gray-100 rounded-lg p-2 flex-1 overflow-y-auto font-mono text-sm border border-gray-200">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="text-gray-500 border-b border-gray-300">
+                                <th class="p-2 w-20">步數 (n)</th>
+                                <th class="p-2">數值 (x)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody">
+                            <!-- Rows will be added here -->
+                        </tbody>
+                    </table>
+                    <div id="emptyState" class="text-center text-gray-400 py-4 italic">
+                        點擊「下一步」開始演示
+                    </div>
+                </div>
+                
+                <div id="convergenceMsg" class="hidden mt-2 p-2 bg-green-100 text-green-800 rounded border border-green-200 text-sm font-bold text-center animate-pulse">
+                    🎉 已收斂至解！ x ≈ <span id="finalResult"></span>
+                </div>
+            </div>
+
+            <!-- Gemini AI Assistant Section -->
+            <div class="flex-1 min-h-0 flex flex-col border border-purple-200 rounded-lg bg-purple-50 overflow-hidden shadow-sm">
+                <div class="bg-purple-600 text-white p-2 flex items-center justify-between">
+                    <span class="font-bold flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-300" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                        </svg>
+                        AI 數學助教
+                    </span>
+                    <button id="btnAiAutoExplain" class="text-xs bg-purple-500 hover:bg-purple-400 text-white py-1 px-2 rounded border border-purple-400 transition shadow">
+                        ✨ 解析目前 k 值
+                    </button>
+                </div>
+                
+                <!-- Chat Output Area -->
+                <div id="aiOutputArea" class="flex-1 p-3 overflow-y-auto bg-white/50 text-sm text-gray-700 ai-output-text relative">
+                    <div class="text-gray-400 italic text-center mt-4">
+                        點擊右上方按鈕生成狀態解析，或在下方提問。
+                    </div>
+                </div>
+
+                <!-- Chat Input Area -->
+                <div class="p-2 bg-white border-t border-purple-100 flex gap-2">
+                    <input type="text" id="aiInput" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-purple-500" placeholder="詢問關於這個圖形的問題...">
+                    <button id="btnAiSend" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm font-bold transition">
+                        送出
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Canvas Area -->
+        <div class="relative flex-1 bg-white overflow-hidden order-1 md:order-2 h-[50vh] md:h-auto border-b md:border-b-0 md:border-l border-gray-300" id="canvasContainer">
+            <canvas id="mainCanvas" class="absolute inset-0 cursor-move"></canvas>
+            
+            <!-- Info Panel: Formula + Coordinates -->
+            <div class="absolute top-4 left-4 bg-white/95 rounded-lg shadow-lg border border-blue-200 pointer-events-none z-10 max-w-md transition-all duration-300 flex flex-col">
+                
+                <!-- Section 1: Formula -->
+                <div class="p-4 border-b border-gray-100">
+                    <div class="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">當前算式</div>
+                    <div class="flex items-center text-xl md:text-2xl text-gray-800 font-serif overflow-hidden" id="formulaDisplay">
+                        <span class="italic mr-2">x<sub>0</sub> = </span> 0
+                    </div>
+                </div>
+
+                <!-- Section 2: Coordinates -->
+                <div class="p-3 bg-blue-50/50 rounded-b-lg">
+                    <div class="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">圖形座標</div>
+                    <div class="grid grid-cols-2 gap-4 text-sm font-mono">
+                        <div>
+                            <span class="block text-red-500 text-xs mb-0.5">● 函數點 (紅線)</span>
+                            <span id="coordCurve" class="text-gray-700 font-bold">(0, 0)</span>
+                        </div>
+                        <div>
+                            <span class="block text-blue-500 text-xs mb-0.5">● 定位點 (藍線)</span>
+                            <span id="coordLine" class="text-gray-700 font-bold">(0, 0)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Floating Labels -->
+            <div class="absolute top-4 right-4 bg-white/90 p-3 rounded shadow border border-gray-200 text-xs pointer-events-none select-none z-10 hidden md:block">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="w-3 h-3 rounded-full bg-blue-400 opacity-50"></span>
+                    <span>y = x (穩定線)</span>
+                </div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                    <span>y = √(k + x) (函數)</span>
+                </div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="w-3 h-3 rounded-full bg-gray-400 opacity-50 border border-gray-300"></span>
+                    <span class="text-gray-500">y = √x (平移基準)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-green-500"></span>
+                    <span>迭代路徑</span>
+                </div>
+                <div class="mt-2 pt-2 border-t border-gray-200 text-gray-400">
+                    滑鼠滾輪縮放 / 拖曳平移
+                </div>
+            </div>
+
+            <!-- Zoom Controls -->
+            <div class="absolute bottom-6 right-6 flex flex-col gap-2 z-10">
+                <button id="btnZoomIn" class="control-btn" title="放大">+</button>
+                <button id="btnZoomFit" class="control-btn" title="適中視角">⟲</button>
+                <button id="btnZoomOut" class="control-btn" title="縮小">-</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Gemini API Setup ---
+        const apiKey = ""; // API key is injected by the environment
+
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            let retries = 0;
+            const delays = [1000, 2000, 4000, 8000, 16000];
+
+            while (retries < maxRetries) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return await response.json();
+                } catch (error) {
+                    retries++;
+                    if (retries >= maxRetries) throw error;
+                    await new Promise(resolve => setTimeout(resolve, delays[retries - 1]));
+                }
+            }
+        }
+
+        async function callGemini(promptText) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            const systemPrompt = "你是一個中學數學老師的 AI 助教。專長是解釋代數、極限概念與蜘蛛網圖 (Cobweb Plot)。請使用繁體中文，語氣親切有耐心，並且善用 Markdown 格式標示重點。回應請保持精簡（約 150-200 字以內）。";
+            
+            const payload = {
+                contents: [{ parts: [{ text: promptText }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] }
+            };
+
+            const options = {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            };
+
+            try {
+                const result = await fetchWithRetry(url, options);
+                return result.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，我無法生成回應。";
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                return "連線發生錯誤，請稍後再試。";
+            }
+        }
+
+        // --- Configuration & State ---
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvasContainer');
+        
+        let k = 2; 
+        let currentX = 0; 
+        let path = []; 
+        let steps = 0;
+        
+        let scale = 100; 
+        let origin = { x: 50, y: 0 }; 
+        let isDragging = false;
+        let lastMousePos = { x: 0, y: 0 };
+
+        // --- Elements ---
+        const kSlider = document.getElementById('kSlider');
+        const kValueDisplay = document.getElementById('kValue');
+        const eqKDisplay = document.getElementById('eqK');
+        const btnStep = document.getElementById('btnStep');
+        const btnPrev = document.getElementById('btnPrev');
+        const btnReset = document.getElementById('btnReset');
+        const tableBody = document.getElementById('dataTableBody');
+        const emptyState = document.getElementById('emptyState');
+        const convergenceMsg = document.getElementById('convergenceMsg');
+        const finalResultDisplay = document.getElementById('finalResult');
+        const formulaDisplay = document.getElementById('formulaDisplay');
+        const coordCurveDisplay = document.getElementById('coordCurve');
+        const coordLineDisplay = document.getElementById('coordLine');
+
+        const btnZoomIn = document.getElementById('btnZoomIn');
+        const btnZoomOut = document.getElementById('btnZoomOut');
+        const btnZoomFit = document.getElementById('btnZoomFit');
+
+        // AI Elements
+        const btnAiAutoExplain = document.getElementById('btnAiAutoExplain');
+        const btnAiSend = document.getElementById('btnAiSend');
+        const aiInput = document.getElementById('aiInput');
+        const aiOutputArea = document.getElementById('aiOutputArea');
+
+        // --- Math Functions ---
+        const f = (x) => Math.sqrt(k + x);
+
+        // --- Viewport Logic ---
+        function fitView() {
+            const targetX = (1 + Math.sqrt(1 + 4*k)) / 2;
+            const domainMax = Math.max(targetX * 1.2, 5); 
+            
+            const padding = 60;
+            const availableW = canvas.width - padding * 2;
+            const availableH = canvas.height - padding * 2;
+            
+            const totalXRange = domainMax + 2; 
+            const scaleX = availableW / totalXRange;
+            const scaleY = availableH / domainMax;
+            scale = Math.min(scaleX, scaleY);
+            
+            origin = { x: padding + (2 * scale), y: canvas.height - padding };
+            draw();
+        }
+
+        function resize() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            fitView();
+        }
+
+        // --- Interaction Logic ---
+        function handleWheel(e) {
+            e.preventDefault();
+            const zoomIntensity = 0.1;
+            const direction = e.deltaY < 0 ? 1 : -1;
+            const factor = 1 + (direction * zoomIntensity);
+            applyZoom(factor, { x: e.offsetX, y: e.offsetY });
+        }
+
+        function applyZoom(factor, centerPixel) {
+            const mathX = (centerPixel.x - origin.x) / scale;
+            const mathY = (origin.y - centerPixel.y) / scale;
+            const newScale = Math.max(10, Math.min(5000000, scale * factor)); 
+            origin.x = centerPixel.x - mathX * newScale;
+            origin.y = centerPixel.y + mathY * newScale;
+            scale = newScale;
+            draw();
+        }
+
+        function handleMouseDown(e) {
+            isDragging = true;
+            lastMousePos = { x: e.offsetX, y: e.offsetY };
+            canvas.style.cursor = 'grabbing';
+        }
+
+        function handleMouseMove(e) {
+            if (!isDragging) return;
+            const dx = e.offsetX - lastMousePos.x;
+            const dy = e.offsetY - lastMousePos.y;
+            origin.x += dx;
+            origin.y += dy;
+            lastMousePos = { x: e.offsetX, y: e.offsetY };
+            draw();
+        }
+
+        function handleMouseUp() {
+            isDragging = false;
+            canvas.style.cursor = 'move';
+        }
+
+        // --- Core Simulation Logic ---
+        function resetSimulation(shouldFitView = true) {
+            currentX = 0;
+            steps = 0;
+            path = [];
+            path.push({x: 0, y: 0}); 
+            updateUI();
+            if (shouldFitView) {
+                fitView();
+            } else {
+                draw();
+            }
+        }
+
+        function takeStep() {
+            const nextY = f(currentX);
+            if (Math.abs(nextY - currentX) < 0.0000001) {
+                showConvergence(currentX);
+                return;
+            }
+            path.push({ x: currentX, y: nextY, type: 'vertical' }); 
+            path.push({ x: nextY, y: nextY, type: 'horizontal' }); 
+            currentX = nextY;
+            steps++;
+            addTableRow(steps, currentX);
+            updateUIState();
+            draw();
+        }
+
+        function stepBack() {
+            if (steps <= 0) return;
+            
+            if (path.length > 2) {
+                path.pop(); 
+                path.pop(); 
+                const lastPoint = path[path.length - 1];
+                currentX = lastPoint.x; 
+            } else {
+                path = [{x:0, y:0}];
+                currentX = 0;
+            }
+
+            steps--;
+            
+            if (tableBody.firstChild) {
+                tableBody.removeChild(tableBody.firstChild);
+            }
+            if (steps === 0) emptyState.classList.remove('hidden');
+
+            convergenceMsg.classList.add('hidden');
+            updateUIState();
+            draw();
+        }
+
+        function showConvergence(val) {
+            convergenceMsg.classList.remove('hidden');
+            finalResultDisplay.textContent = val.toFixed(4);
+        }
+
+        function updateUI() {
+            tableBody.innerHTML = '';
+            emptyState.classList.remove('hidden');
+            convergenceMsg.classList.add('hidden');
+            kValueDisplay.textContent = k;
+            eqKDisplay.textContent = k;
+            updateUIState();
+        }
+
+        function updateUIState() {
+            btnPrev.disabled = steps <= 0;
+            if (steps <= 0) btnPrev.classList.add('opacity-50', 'cursor-not-allowed');
+            else btnPrev.classList.remove('opacity-50', 'cursor-not-allowed');
+
+            renderFormula(steps);
+            updateCoordinates(steps);
+        }
+
+        function updateCoordinates(n) {
+            if (n === 0) {
+                coordCurveDisplay.textContent = "(0.00, 0.00)";
+                coordLineDisplay.textContent = "(0.00, 0.00)";
+                return;
+            }
+            
+            const vertIdx = 2 * n - 1;
+            const horizIdx = 2 * n;
+
+            if (vertIdx < path.length) {
+                const p = path[vertIdx];
+                coordCurveDisplay.textContent = `(${p.x.toFixed(4)}, ${p.y.toFixed(4)})`;
+            }
+            if (horizIdx < path.length) {
+                const p = path[horizIdx];
+                coordLineDisplay.textContent = `(${p.x.toFixed(4)}, ${p.y.toFixed(4)})`;
+            }
+        }
+
+        function addTableRow(n, val) {
+            emptyState.classList.add('hidden');
+            const row = document.createElement('tr');
+            row.className = "border-b border-gray-100 hover:bg-blue-50 transition-colors animate-fade-in";
+            row.innerHTML = `
+                <td class="p-2 text-gray-600 font-bold">Step ${n}</td>
+                <td class="p-2 text-blue-600">${val.toFixed(5)}...</td>
+            `;
+            tableBody.prepend(row);
+        }
+
+        // --- Formula Rendering ---
+        function renderFormula(n) {
+            const container = document.getElementById('formulaDisplay');
+            if (n === 0) {
+                container.innerHTML = `<span class="italic mr-2">x<sub>0</sub> = </span> 0`;
+                return;
+            }
+            
+            function generateHTML(targetDepth, current) {
+                if (current > 4) return `<span class="text-gray-500 mx-1">...</span>`; 
+                
+                let inner = "";
+                if (current < targetDepth) {
+                    inner = ` + ${generateHTML(targetDepth, current + 1)}`;
+                }
+                
+                return `
+                    <div class="math-radical text-blue-700">
+                        <span class="math-surd">√</span>
+                        <span class="math-radicand">${k}${inner}</span>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = `<span class="italic mr-2 text-gray-500">x<sub>${n}</sub> = </span>` + generateHTML(n, 1);
+        }
+
+        // --- Drawing ---
+        function toCanvas(x, y) {
+            return {
+                x: origin.x + x * scale,
+                y: origin.y - y * scale
+            };
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const width = canvas.width;
+            const height = canvas.height;
+            const minVisibleX = -origin.x / scale;
+            const maxVisibleX = (width - origin.x) / scale;
+            const minVisibleY = (origin.y - height) / scale;
+            const maxVisibleY = origin.y / scale;
+
+            // 1. Grid
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#f3f4f6';
+            let step = 1;
+            if (scale < 20) step = 5;
+            if (scale < 5) step = 10;
+            if (scale < 1) step = 50;
+            const startGridX = Math.floor(minVisibleX / step) * step;
+            const startGridY = Math.floor(minVisibleY / step) * step;
+            ctx.beginPath();
+            for(let i = startGridX; i <= maxVisibleX; i+=step) {
+                const p = toCanvas(i, 0);
+                ctx.moveTo(p.x, 0); ctx.lineTo(p.x, height);
+            }
+            for(let i = startGridY; i <= maxVisibleY; i+=step) {
+                const p = toCanvas(0, i);
+                ctx.moveTo(0, p.y); ctx.lineTo(width, p.y);
+            }
+            ctx.stroke();
+
+            // 2. Axes
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#374151';
+            ctx.beginPath();
+            const originPos = toCanvas(0, 0);
+            if (originPos.y >= 0 && originPos.y <= height) {
+                ctx.moveTo(0, originPos.y); ctx.lineTo(width, originPos.y);
+            }
+            if (originPos.x >= 0 && originPos.x <= width) {
+                ctx.moveTo(originPos.x, 0); ctx.lineTo(originPos.x, height);
+            }
+            ctx.stroke();
+
+            // 3. y = x (Blue Dashed)
+            ctx.beginPath();
+            ctx.strokeStyle = '#93C5FD'; 
+            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = 2;
+            const startLine = Math.min(minVisibleX, minVisibleY);
+            const endLine = Math.max(maxVisibleX, maxVisibleY);
+            const p1 = toCanvas(startLine, startLine);
+            const p2 = toCanvas(endLine, endLine);
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 3.5 Reference y = sqrt(x) (Gray Dashed)
+            ctx.beginPath();
+            ctx.strokeStyle = '#9CA3AF';
+            ctx.setLineDash([3, 3]);
+            ctx.lineWidth = 1.5;
+            let drawRefStartX = Math.max(0, minVisibleX);
+            const drawRefEndX = maxVisibleX;
+            const pixelStep = 2;
+            const mathStep = pixelStep / scale;
+            
+            for (let x = drawRefStartX; x <= drawRefEndX; x += mathStep) {
+                const y = Math.sqrt(x);
+                const pos = toCanvas(x, y);
+                if (x === drawRefStartX) ctx.moveTo(pos.x, pos.y);
+                else ctx.lineTo(pos.x, pos.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 4. y = sqrt(k + x) (Red Curve)
+            ctx.beginPath();
+            ctx.strokeStyle = '#EF4444';
+            ctx.lineWidth = 3;
+            let drawStartX = Math.max(-k, minVisibleX); 
+            const drawEndX = maxVisibleX;
+            
+            for (let x = drawStartX; x <= drawEndX; x += mathStep) {
+                if (k + x < 0) continue;
+                const y = Math.sqrt(k + x);
+                const pos = toCanvas(x, y);
+                if (Math.abs(x - drawStartX) < mathStep) ctx.moveTo(pos.x, pos.y);
+                else ctx.lineTo(pos.x, pos.y);
+            }
+            ctx.stroke();
+
+            // 4.5 Draw Vertex (-k, 0) indicator
+            const vertexPos = toCanvas(-k, 0);
+            if (vertexPos.x >= 0 && vertexPos.x <= width && vertexPos.y >= 0 && vertexPos.y <= height) {
+                ctx.fillStyle = '#EF4444';
+                ctx.beginPath();
+                ctx.arc(vertexPos.x, vertexPos.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#B91C1C';
+                ctx.font = '12px sans-serif';
+                ctx.fillText(`(${-k}, 0)`, vertexPos.x - 20, vertexPos.y + 15);
+            }
+
+            // 5. Path
+            if (path.length > 0) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#10B981';
+                ctx.lineWidth = 2;
+                const startPos = toCanvas(path[0].x, path[0].y);
+                ctx.moveTo(startPos.x, startPos.y);
+
+                for (let i = 1; i < path.length; i++) {
+                    const pt = path[i];
+                    const pos = toCanvas(pt.x, pt.y);
+                    ctx.lineTo(pos.x, pos.y);
+                }
+                ctx.stroke();
+
+                // Dots
+                for (let i = 0; i < path.length; i++) {
+                    const pt = path[i];
+                    if (pt.x < minVisibleX || pt.x > maxVisibleX || pt.y < minVisibleY || pt.y > maxVisibleY) continue;
+                    const pos = toCanvas(pt.x, pt.y);
+
+                    let fillColor, strokeColor;
+                    
+                    if (i === 0) {
+                        fillColor = '#10B981'; 
+                        strokeColor = '#059669';
+                    } else if (pt.type === 'vertical') {
+                        fillColor = '#EF4444'; 
+                        strokeColor = '#B91C1C';
+                    } else {
+                        fillColor = '#3B82F6'; 
+                        strokeColor = '#1D4ED8';
+                    }
+
+                    const isLast = (i === path.length - 1);
+                    ctx.fillStyle = isLast ? fillColor : '#fff';
+                    ctx.strokeStyle = strokeColor;
+                    ctx.lineWidth = 2;
+
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                
+                const lastPt = path[path.length-1];
+                if (lastPt.x >= minVisibleX && lastPt.x <= maxVisibleX && lastPt.y >= minVisibleY && lastPt.y <= maxVisibleY) {
+                    const lastPos = toCanvas(lastPt.x, lastPt.y);
+                    
+                    let textColor = '#000';
+                    if (lastPt.type === 'vertical') textColor = '#B91C1C'; 
+                    else if (lastPt.type === 'horizontal') textColor = '#1D4ED8'; 
+                    else textColor = '#059669'; 
+
+                    ctx.fillStyle = textColor;
+                    ctx.font = 'bold 14px sans-serif';
+                    ctx.shadowColor = "white";
+                    ctx.shadowBlur = 4;
+                    const offset = lastPt.type === 'vertical' ? -20 : 15;
+                    ctx.fillText(`(${lastPt.x.toFixed(2)}, ${lastPt.y.toFixed(2)})`, lastPos.x + 10, lastPos.y + offset);
+                    ctx.shadowBlur = 0;
+                }
+            }
+        }
+
+        // --- AI Interaction Handlers ---
+        function appendAiMessage(htmlContent, isUser = false) {
+            const wrapper = document.createElement('div');
+            wrapper.className = `mb-3 flex ${isUser ? 'justify-end' : 'justify-start'}`;
+            
+            const msgBubble = document.createElement('div');
+            msgBubble.className = `max-w-[85%] p-3 rounded-lg ${isUser ? 'bg-purple-600 text-white rounded-br-none' : 'bg-white border border-purple-100 shadow-sm rounded-bl-none text-gray-800'}`;
+            msgBubble.innerHTML = htmlContent;
+            
+            wrapper.appendChild(msgBubble);
+            aiOutputArea.appendChild(wrapper);
+            aiOutputArea.scrollTop = aiOutputArea.scrollHeight; // Auto-scroll
+        }
+
+        function showAiLoading() {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'aiLoadingIndicator';
+            wrapper.className = 'mb-3 flex justify-start';
+            wrapper.innerHTML = `
+                <div class="bg-white border border-purple-100 shadow-sm p-3 rounded-lg rounded-bl-none">
+                    <div class="loader"></div> <span class="text-sm text-purple-500 ml-2 font-bold">AI 思考中...</span>
+                </div>
+            `;
+            aiOutputArea.appendChild(wrapper);
+            aiOutputArea.scrollTop = aiOutputArea.scrollHeight;
+        }
+
+        function hideAiLoading() {
+            const loader = document.getElementById('aiLoadingIndicator');
+            if (loader) loader.remove();
+        }
+
+        // Simple Markdown parser for basic formatting (bold, breaks)
+        function parseSimpleMarkdown(text) {
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br>');
+        }
+
+        async function handleAiExplain() {
+            // Clear placeholder if it's the first message
+            if (aiOutputArea.innerHTML.includes("點擊右上方按鈕生成狀態解析")) {
+                aiOutputArea.innerHTML = '';
+            }
+
+            const targetVal = (1 + Math.sqrt(1 + 4*k)) / 2;
+            const targetFormatted = targetVal.toFixed(4);
+            
+            appendAiMessage(`請解釋目前 k=${k} 時圖形收斂的原因。`, true);
+            showAiLoading();
+
+            const prompt = `學生目前正在操作無窮巢狀根號的圖形工具。目前的參數是 k=${k}，對應的函數是 y = √( ${k} + x )。
+從圖形（蜘蛛網圖）上來看，數值正收斂到 ${targetFormatted}。
+請扮演親切的數學 AI 助教，解釋：
+1. 代數上，如何用方程式解出這個收斂點？
+2. 為什麼圖形中的紅線(函數)跟藍線(y=x)的交點就是最後的答案？
+最後給學生一個有趣的小提示或挑戰問題。字數請控制在 150-200 字以內，善用 markdown 加粗重點。`;
+
+            const response = await callGemini(prompt);
+            hideAiLoading();
+            appendAiMessage(parseSimpleMarkdown(response));
+        }
+
+        async function handleAiChat() {
+            const text = aiInput.value.trim();
+            if (!text) return;
+            
+            if (aiOutputArea.innerHTML.includes("點擊右上方按鈕生成狀態解析")) {
+                aiOutputArea.innerHTML = '';
+            }
+
+            appendAiMessage(text, true);
+            aiInput.value = '';
+            showAiLoading();
+
+            const prompt = `目前的教學情境：無窮巢狀根號視覺化工具 (方程式 y = √(k+x))。目前的 k = ${k}。
+學生問了以下問題：「${text}」
+請以數學 AI 助教的身份，用國中生能理解的程度回答這個問題。`;
+
+            const response = await callGemini(prompt);
+            hideAiLoading();
+            appendAiMessage(parseSimpleMarkdown(response));
+        }
+
+        // --- Event Listeners ---
+        kSlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            if (!isNaN(val)) {
+                k = val;
+                resetSimulation(false);
+            }
+        });
+
+        btnStep.addEventListener('click', takeStep);
+        btnPrev.addEventListener('click', stepBack);
+        btnReset.addEventListener('click', () => resetSimulation(true));
+        
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
+        canvas.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        window.addEventListener('resize', resize);
+
+        btnZoomIn.addEventListener('click', () => applyZoom(1.2, {x: canvas.width/2, y: canvas.height/2}));
+        btnZoomOut.addEventListener('click', () => applyZoom(0.8, {x: canvas.width/2, y: canvas.height/2}));
+        btnZoomFit.addEventListener('click', fitView);
+
+        // AI Listeners
+        btnAiAutoExplain.addEventListener('click', handleAiExplain);
+        btnAiSend.addEventListener('click', handleAiChat);
+        aiInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleAiChat();
+        });
+
+        // --- Start ---
+        resize();
+    </script>
+</body>
+</html>
