@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>漫畫風蒙提霍爾實驗室</title>
+  
+  <!-- 引入 Tailwind CSS (負責畫面排版與顏色) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 引入 React 與 ReactDOM (負責互動邏輯) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- 引入 Babel (負責讓瀏覽器看懂 JSX 語法) -->
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <!-- 遊戲會渲染在這個 div 裡面 -->
+  <div id="root"></div>
+
+  <!-- 主要程式碼區塊 -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const MontyHall = () => {
+      // 遊戲規則設定 (字串暫存，方便使用者自由刪除輸入)
+      const [inputConfig, setInputConfig] = useState({ total: '3', open: '1' });
+      // 實際生效的遊戲規則
+      const [config, setConfig] = useState({ total: 3, open: 1 });
+      
+      // 遊戲狀態
+      const [doors, setDoors] = useState([]);
+      const [gameState, setGameState] = useState('start'); // start, opened, end
+      const [selectedDoor, setSelectedDoor] = useState(null);
+      const [openedDoors, setOpenedDoors] = useState([]);
+      const [resultMessage, setResultMessage] = useState('請選擇一扇門！');
+      
+      // 防連點機制 (防止學生暴力狂點造成邏輯穿透)
+      const [isInteracting, setIsInteracting] = useState(false);
+      
+      // 統計數據
+      const [stats, setStats] = useState({
+        stay: { played: 0, won: 0 },
+        switch: { played: 0, won: 0 }
+      });
+      
+      // 模擬器設定
+      const [simStrategy, setSimStrategy] = useState('both'); // stay, switch, both
+      const [simulateCount, setSimulateCount] = useState('100');
+      const [isSimulating, setIsSimulating] = useState(false);
+
+      // 初始化遊戲
+      const initGame = (totalDoors) => {
+        const newDoors = Array.from({ length: totalDoors }, (_, i) => ({
+          id: i,
+          content: 'goat',
+          isOpen: false,
+          isSelected: false,
+          isMissedCar: false
+        }));
+        
+        // 隨機放一台車
+        const carIndex = Math.floor(Math.random() * totalDoors);
+        newDoors[carIndex].content = 'car';
+        
+        setDoors(newDoors);
+        setGameState('start');
+        setSelectedDoor(null);
+        setOpenedDoors([]);
+        setResultMessage('請選擇一扇門！');
+        setIsInteracting(false);
+      };
+
+      useEffect(() => {
+        initGame(config.total);
+      }, [config]);
+
+      // 處理輸入框變化
+      const handleConfigChange = (e, field) => {
+        setInputConfig(prev => ({ ...prev, [field]: e.target.value }));
+      };
+
+      // 驗證並套用設定 (當失去焦點或按下 Enter 時觸發)
+      const applyConfig = () => {
+        let t = parseInt(inputConfig.total);
+        let o = parseInt(inputConfig.open);
+
+        // 防呆機制：如果輸入非數字或留空，恢復預設值
+        if (isNaN(t) || t < 3) t = 3;
+        if (t > 100) t = 100; // 最大 100 扇門
+        
+        if (isNaN(o) || o < 1) o = 1;
+        if (o > t - 2) o = t - 2; // 開門數最多只能是 總數 - 2
+
+        setInputConfig({ total: t.toString(), open: o.toString() });
+        setConfig({ total: t, open: o });
+      };
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter') applyConfig();
+      };
+
+      // 處理玩家點擊門
+      const handleDoorClick = (doorId) => {
+        if (isInteracting || isSimulating) return; // 防連點或模擬中鎖定
+        
+        if (gameState === 'start') {
+          setIsInteracting(true);
+          setSelectedDoor(doorId);
+          
+          const { total, open } = config;
+          // 雙重保險：過濾掉你選的門，且強制過濾掉「內容是 car」的門，主持人絕對碰不到車
+          let availableToOpen = doors.filter(d => d.id !== doorId && d.content !== 'car');
+          let toOpenIds = [];
+          
+          // 隨機選出指定數量的門來開啟
+          for(let i=0; i<open; i++) {
+            if(availableToOpen.length === 0) break;
+            const randIdx = Math.floor(Math.random() * availableToOpen.length);
+            toOpenIds.push(availableToOpen[randIdx].id);
+            availableToOpen.splice(randIdx, 1);
+          }
+          
+          setOpenedDoors(toOpenIds);
+          setDoors(prev => prev.map(d => ({
+            ...d,
+            isOpen: toOpenIds.includes(d.id),
+            isSelected: d.id === doorId
+          })));
+          
+          setResultMessage(`主持人打開了 ${open} 扇裡面是山羊的門！你要換一扇門嗎？`);
+          setGameState('opened');
+          setTimeout(() => setIsInteracting(false), 150); // 延遲解鎖
+          
+        } else if (gameState === 'opened') {
+          const targetDoor = doors.find(d => d.id === doorId);
+          if (targetDoor.isOpen) return; // 不能選已經開過的門
+
+          setIsInteracting(true);
+          const willSwitch = doorId !== selectedDoor;
+          const isWin = targetDoor.content === 'car';
+
+          setDoors(prev => prev.map(d => ({
+              ...d,
+              isSelected: d.id === doorId,
+              // 結算畫面優化：只打開你最終選的門，以及「把藏有車的門顯示出來」，其餘沒選的羊繼續關著
+              isOpen: d.isOpen || d.id === doorId || d.content === 'car',
+              isMissedCar: d.content === 'car' && d.id !== doorId // 標記你錯過的車
+          })));
+
+          if (isWin) {
+            setResultMessage('🎉 恭喜！開出跑車啦！🚗');
+          } else {
+            setResultMessage('💥 噗！是一隻山羊！🐐');
+          }
+
+          updateStats(willSwitch ? 'switch' : 'stay', isWin);
+          setGameState('end');
+          setTimeout(() => setIsInteracting(false), 150); // 延遲解鎖
+        }
+      };
+
+      const updateStats = (strategy, isWin) => {
+        setStats(prev => ({
+          ...prev,
+          [strategy]: {
+            played: prev[strategy].played + 1,
+            won: prev[strategy].won + (isWin ? 1 : 0)
+          }
+        }));
+      };
+
+      const resetStats = () => {
+        setStats({
+          stay: { played: 0, won: 0 },
+          switch: { played: 0, won: 0 }
+        });
+      };
+
+      // 解決當機問題：使用 Chunking (分塊運算) 與 requestAnimationFrame
+      const runSimulation = () => {
+        const count = parseInt(simulateCount) || 1;
+        if (count <= 0 || isSimulating) return;
+        
+        setIsSimulating(true);
+        setResultMessage(`🚀 正在進行 ${count} 次模擬...`);
+        
+        let currentStats = {
+          stay: { ...stats.stay },
+          switch: { ...stats.switch }
+        };
+        const { total, open } = config;
+        
+        let runsLeft = count;
+        const chunkSize = 2000; // 每次只算 2000 次，避免霸佔主執行緒導致當機
+
+        const processChunk = () => {
+          const currentChunkSize = Math.min(runsLeft, chunkSize);
+          
+          for (let i = 0; i < currentChunkSize; i++) {
+            let winIndex = Math.floor(Math.random() * total);
+            let initialChoice = Math.floor(Math.random() * total);
+            
+            if (simStrategy === 'stay' || simStrategy === 'both') {
+              let isWinStay = (winIndex === initialChoice);
+              currentStats.stay.played += 1;
+              currentStats.stay.won += isWinStay ? 1 : 0;
+            }
+
+            if (simStrategy === 'switch' || simStrategy === 'both') {
+              let isWinSwitch = false;
+              if (initialChoice !== winIndex) {
+                 // 如果一開始沒選中車，換門的贏面：
+                 // 剩下的門有 total - 1 - open 扇
+                 // 其中有一扇是車
+                 const remainingSwitchable = total - 1 - open;
+                 if (Math.floor(Math.random() * remainingSwitchable) === 0) {
+                   isWinSwitch = true;
+                 }
+              }
+              currentStats.switch.played += 1;
+              currentStats.switch.won += isWinSwitch ? 1 : 0;
+            }
+          }
+          
+          runsLeft -= currentChunkSize;
+          
+          if (runsLeft > 0) {
+            setStats({ ...currentStats }); // 更新進度條
+            requestAnimationFrame(processChunk); // 讓出執行權，下一幀繼續跑
+          } else {
+            setStats({ ...currentStats });
+            setIsSimulating(false);
+            setResultMessage('✅ 模擬完成！看看大數法則的威力吧！');
+          }
+        };
+
+        // 啟動分塊運算
+        requestAnimationFrame(processChunk);
+      };
+
+      const getWinRate = (strategyStats) => {
+        if (strategyStats.played === 0) return 0;
+        return ((strategyStats.won / strategyStats.played) * 100).toFixed(1);
+      };
+
+      const getTheoreticalRate = (strategy) => {
+        const { total, open } = config;
+        if (strategy === 'stay') {
+          return ((1 / total) * 100).toFixed(1);
+        } else {
+          // 換門機率 = (一開始選錯的機率) * (換門後選中車的機率)
+          // = ((total - 1) / total) * (1 / (total - 1 - open))
+          const rate = ((total - 1) / total) * (1 / (total - 1 - open));
+          return (rate * 100).toFixed(1);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-pink-100 font-sans p-4 md:p-8 text-black selection:bg-yellow-300">
+          <div className="max-w-5xl mx-auto space-y-6">
+            
+            {/* 頂部標題 */}
+            <header className="bg-yellow-400 border-4 border-black shadow-[6px_6px_0_0_#000] p-6 rounded-2xl text-center transform -rotate-1 hover:rotate-0 transition-transform">
+              <h1 className="text-3xl md:text-5xl font-black mb-2 tracking-tight">🚪 漫畫風蒙提霍爾實驗室 🐐</h1>
+              <p className="text-lg md:text-xl font-bold opacity-80">換，還是不換？用機率破解直覺的陷阱！</p>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* 左側：控制面板 */}
+              <div className="lg:col-span-1 space-y-6">
+                
+                {/* 規則設定 */}
+                <div className="bg-white border-4 border-black shadow-[4px_4px_0_0_#000] p-5 rounded-2xl">
+                  <h2 className="text-xl font-black border-b-4 border-black pb-2 mb-4 flex items-center">
+                    <span className="text-2xl mr-2">⚙️</span> 遊戲規則設定
+                  </h2>
+                  <div className="space-y-4 font-bold">
+                    <div>
+                      <label className="block mb-1">總共有幾扇門？ (3~100)</label>
+                      <input 
+                        type="number" 
+                        value={inputConfig.total}
+                        onChange={(e) => handleConfigChange(e, 'total')}
+                        onBlur={applyConfig}
+                        onKeyDown={handleKeyDown}
+                        disabled={isSimulating}
+                        className="w-full border-4 border-black p-2 rounded-xl bg-blue-50 focus:bg-yellow-100 focus:outline-none text-xl"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1">主持人打開幾扇山羊門？</label>
+                      <input 
+                        type="number" 
+                        value={inputConfig.open}
+                        onChange={(e) => handleConfigChange(e, 'open')}
+                        onBlur={applyConfig}
+                        onKeyDown={handleKeyDown}
+                        disabled={isSimulating}
+                        className="w-full border-4 border-black p-2 rounded-xl bg-blue-50 focus:bg-yellow-100 focus:outline-none text-xl"
+                      />
+                      <p className="text-xs mt-1 text-red-600 font-bold">*最多只能開 (總門數 - 2) 扇</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 快速模擬器 */}
+                <div className="bg-blue-300 border-4 border-black shadow-[4px_4px_0_0_#000] p-5 rounded-2xl">
+                  <h2 className="text-xl font-black border-b-4 border-black pb-2 mb-4 flex items-center">
+                    <span className="text-2xl mr-2">🚀</span> 快速模擬器
+                  </h2>
+                  <div className="space-y-4 font-bold">
+                    <div>
+                      <label className="block mb-1">模擬策略：</label>
+                      <select 
+                        value={simStrategy} 
+                        onChange={(e) => setSimStrategy(e.target.value)}
+                        disabled={isSimulating}
+                        className="w-full border-4 border-black p-2 rounded-xl bg-white focus:outline-none cursor-pointer"
+                      >
+                        <option value="both">⚔️ 兩者同時比較</option>
+                        <option value="stay">✊ 只模擬「堅持不換」</option>
+                        <option value="switch">👉 只模擬「改變選擇」</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block mb-1">執行次數：</label>
+                      <input 
+                        type="number" 
+                        value={simulateCount}
+                        onChange={(e) => setSimulateCount(e.target.value)}
+                        disabled={isSimulating}
+                        className="w-full border-4 border-black p-2 rounded-xl bg-white focus:outline-none text-xl"
+                      />
+                    </div>
+                    <button 
+                      onClick={runSimulation}
+                      disabled={isSimulating}
+                      className="w-full bg-green-400 hover:bg-green-500 active:translate-y-1 active:shadow-none border-4 border-black shadow-[4px_4px_0_0_#000] p-3 rounded-xl font-black text-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSimulating ? '運算狂飆中...' : '開始模擬！'}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* 右側：互動區與戰績表 */}
+              <div className="lg:col-span-2 space-y-6">
+                
+                {/* 遊戲互動區 */}
+                <div className="bg-white border-4 border-black shadow-[4px_4px_0_0_#000] p-6 rounded-2xl flex flex-col items-center min-h-[400px]">
+                  
+                  <div className={`w-full text-center p-3 border-4 border-black rounded-xl font-black text-lg md:text-xl mb-6 shadow-[2px_2px_0_0_#000] ${
+                    gameState === 'start' ? 'bg-yellow-300' : 
+                    gameState === 'opened' ? 'bg-blue-300 animate-pulse' : 
+                    resultMessage.includes('恭喜') ? 'bg-green-300' : 'bg-red-300'
+                  }`}>
+                    {resultMessage}
+                  </div>
+
+                  {/* 動態門網格：根據門的數量自適應大小 */}
+                  <div className="w-full overflow-y-auto max-h-[50vh] p-2 hide-scrollbar">
+                    <div className={`grid gap-4 w-full ${
+                      config.total <= 5 ? 'grid-cols-3 md:grid-cols-5' : 
+                      config.total <= 10 ? 'grid-cols-4 md:grid-cols-5' : 
+                      config.total <= 30 ? 'grid-cols-6 md:grid-cols-8' : 'grid-cols-8 md:grid-cols-12'
+                    }`}>
+                      {doors.map(door => (
+                        <div 
+                          key={door.id}
+                          onClick={() => handleDoorClick(door.id)}
+                          className={`
+                            relative flex flex-col items-center justify-center border-4 border-black 
+                            transition-all duration-200 aspect-[3/4] cursor-pointer
+                            ${config.total > 50 ? 'rounded-md' : 'rounded-t-[3rem] rounded-b-xl'}
+                            ${door.isSelected ? 'ring-4 ring-yellow-400 ring-offset-2' : ''}
+                            ${!door.isOpen 
+                              ? 'bg-red-500 hover:bg-red-400 shadow-[2px_2px_0_0_#000] hover:-translate-y-1' 
+                              : 'bg-gray-100 shadow-inner cursor-default'}
+                            ${isInteracting ? 'pointer-events-none' : ''}
+                          `}
+                        >
+                          {/* 門內內容 */}
+                          {!door.isOpen ? (
+                             <div className={`${config.total > 50 ? 'text-sm' : 'text-3xl'} text-black opacity-40 font-black`}>
+                               {door.id + 1}
+                             </div>
+                          ) : (
+                             door.content === 'car' 
+                               ? <div className="relative flex flex-col items-center justify-center">
+                                   <div className={`${config.total > 50 ? 'text-xl' : 'text-5xl'} drop-shadow-md`}>🚗</div>
+                                   {door.isMissedCar && (
+                                     <div className="absolute -top-8 bg-red-600 text-white text-[10px] md:text-xs font-bold px-2 py-1 rounded-md border-2 border-black shadow-[2px_2px_0_0_#000] whitespace-nowrap z-20 animate-bounce">
+                                       錯過惹!
+                                     </div>
+                                   )}
+                                 </div> 
+                               : <div className={`${config.total > 50 ? 'text-xl' : 'text-5xl'} opacity-80`}>🐐</div>
+                          )}
+
+                          {/* 選中標籤 */}
+                          {door.isSelected && (
+                            <div className="absolute -bottom-3 bg-yellow-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full border-2 border-black shadow-[1px_1px_0_0_#000] z-10">
+                              你選的
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 重置按鈕 */}
+                  {gameState === 'end' && (
+                    <button 
+                      onClick={() => initGame(config.total)}
+                      className="mt-8 bg-black text-white px-8 py-3 rounded-xl font-black text-xl hover:scale-105 active:scale-95 transition-transform"
+                    >
+                      再來一局！
+                    </button>
+                  )}
+                </div>
+
+                {/* 戰績與統計圖表 */}
+                <div className="bg-white border-4 border-black shadow-[4px_4px_0_0_#000] p-6 rounded-2xl relative">
+                  <button 
+                    onClick={resetStats}
+                    disabled={isSimulating}
+                    className="absolute top-4 right-4 bg-gray-200 hover:bg-red-400 hover:text-white border-2 border-black p-2 rounded-lg font-bold text-sm transition-colors"
+                  >
+                    🗑️ 清空數據
+                  </button>
+                  <h2 className="text-xl font-black border-b-4 border-black pb-2 mb-6 flex items-center">
+                    <span className="text-2xl mr-2">📊</span> 戰績與大數法則驗證
+                  </h2>
+
+                  <div className="space-y-8">
+                    {/* 堅持不換 Bar */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-end font-bold">
+                        <div className="flex items-center text-lg">
+                          <span className="bg-red-100 p-1 rounded border-2 border-black mr-2">✊</span>
+                          堅持不換 <span className="text-sm font-normal ml-2 text-gray-500">({stats.stay.played}戰 {stats.stay.won}勝)</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-2xl font-black">{getWinRate(stats.stay)}%</span>
+                          <span className="text-xs text-gray-500 block">理論值: {getTheoreticalRate('stay')}%</span>
+                        </div>
+                      </div>
+                      {/* 自訂進度條 */}
+                      <div className="h-8 w-full bg-gray-200 border-4 border-black rounded-full relative overflow-hidden">
+                        <div 
+                          className="h-full bg-red-400 transition-all duration-300 ease-out"
+                          style={{ width: `${getWinRate(stats.stay)}%` }}
+                        />
+                        {/* 理論值標線 */}
+                        <div 
+                          className="absolute top-0 bottom-0 w-1 bg-black z-10 transition-all duration-500"
+                          style={{ left: `${getTheoreticalRate('stay')}%` }}
+                        >
+                          <div className="absolute -top-6 -translate-x-1/2 text-[10px] font-black bg-black text-white px-1 rounded">理論</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 改變選擇 Bar */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-end font-bold">
+                        <div className="flex items-center text-lg">
+                          <span className="bg-blue-100 p-1 rounded border-2 border-black mr-2">👉</span>
+                          改變選擇 <span className="text-sm font-normal ml-2 text-gray-500">({stats.switch.played}戰 {stats.switch.won}勝)</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-2xl font-black">{getWinRate(stats.switch)}%</span>
+                          <span className="text-xs text-gray-500 block">理論值: {getTheoreticalRate('switch')}%</span>
+                        </div>
+                      </div>
+                      {/* 自訂進度條 */}
+                      <div className="h-8 w-full bg-gray-200 border-4 border-black rounded-full relative overflow-hidden">
+                        <div 
+                          className="h-full bg-blue-400 transition-all duration-300 ease-out"
+                          style={{ width: `${getWinRate(stats.switch)}%` }}
+                        />
+                        {/* 理論值標線 */}
+                        <div 
+                          className="absolute top-0 bottom-0 w-1 bg-black z-10 transition-all duration-500"
+                          style={{ left: `${getTheoreticalRate('switch')}%` }}
+                        >
+                          <div className="absolute -top-6 -translate-x-1/2 text-[10px] font-black bg-black text-white px-1 rounded">理論</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            </div>
+          </div>
+          
+          {/* 隱藏式滾動條樣式修正 */}
+          <style dangerouslySetInnerHTML={{__html: `
+            .hide-scrollbar::-webkit-scrollbar { display: none; }
+            .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+          `}} />
+        </div>
+      );
+    }
+
+    // 將 React 元件掛載到 HTML 內的 root 節點
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<MontyHall />);
+  </script>
+</body>
+</html>
