@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>費馬點探究：從實驗到證明</title>
+  
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 引入 React 與 ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- 引入 Babel 進行即時編譯 -->
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- 引入 Lucide 圖示庫 -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- 補充原專案依賴的自訂動畫效果 -->
+  <style>
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideInLeft { from { transform: translateX(-1rem); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes slideInRight { from { transform: translateX(1rem); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes slideInBottom { from { transform: translateY(1rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes zoomIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    
+    .animate-in.fade-in { animation: fadeIn 0.4s ease-out forwards; }
+    .slide-in-from-left-2 { animation: slideInLeft 0.4s ease-out forwards; }
+    .slide-in-from-right-4 { animation: slideInRight 0.4s ease-out forwards; }
+    .slide-in-from-bottom-2 { animation: slideInBottom 0.4s ease-out forwards; }
+    .zoom-in { animation: zoomIn 0.4s ease-out forwards; }
+    
+    /* 避免觸控設備上不必要的捲動與選取 */
+    .touch-none { touch-action: none; }
+  </style>
+</head>
+<body class="bg-slate-200 min-h-screen flex items-center justify-center py-8">
+  <div id="root" class="w-full"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // ==========================================
+    // Lucide Icon 橋接器
+    // ==========================================
+    const createIcon = (iconName) => ({ size = 24, className = "" }) => {
+      const ref = useRef(null);
+      useEffect(() => {
+        if (ref.current && window.lucide && window.lucide.icons[iconName]) {
+          ref.current.innerHTML = '';
+          const svg = window.lucide.createElement(window.lucide.icons[iconName]);
+          svg.setAttribute('width', size);
+          svg.setAttribute('height', size);
+          if (className) svg.setAttribute('class', className);
+          ref.current.appendChild(svg);
+        }
+      }, [size, className]);
+      return <span ref={ref} className={`inline-flex items-center justify-center ${className}`} />;
+    };
+
+    // 初始化所有用到的圖示
+    const CheckCircle = createIcon('CheckCircle');
+    const ArrowRight = createIcon('ArrowRight');
+    const ArrowLeft = createIcon('ArrowLeft');
+    const RotateCcw = createIcon('RotateCcw');
+    const MousePointer2 = createIcon('MousePointer2');
+    const Ruler = createIcon('Ruler');
+    const Star = createIcon('Star');
+    const RefreshCw = createIcon('RefreshCw');
+    const ZoomIn = createIcon('ZoomIn');
+    const ZoomOut = createIcon('ZoomOut');
+    const Move = createIcon('Move');
+    const PenTool = createIcon('PenTool');
+    const ClipboardList = createIcon('ClipboardList');
+    const Plus = createIcon('Plus');
+    const Search = createIcon('Search');
+    const Trash2 = createIcon('Trash2');
+    const Info = createIcon('Info');
+    const Eye = createIcon('Eye');
+    const EyeOff = createIcon('EyeOff');
+    const HelpCircle = createIcon('HelpCircle');
+    const AlertTriangle = createIcon('AlertTriangle');
+
+    // ==========================================
+    // 純數學輔助函式
+    // ==========================================
+    const dist = (p1, p2) => Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+    const toRad = (deg) => deg * Math.PI / 180;
+
+    const rotatePointByAngle = (p, center, angleRad) => {
+      const dx = p.x - center.x;
+      const dy = p.y - center.y;
+      return {
+        x: center.x + dx * Math.cos(angleRad) - dy * Math.sin(angleRad),
+        y: center.y + dx * Math.sin(angleRad) + dy * Math.cos(angleRad)
+      };
+    };
+
+    const rotatePoint = (p, center, angleDeg) => {
+      return rotatePointByAngle(p, center, toRad(angleDeg));
+    };
+
+    const getAngle = (p1, center, p2) => {
+      const a = dist(center, p2);
+      const b = dist(center, p1);
+      const c = dist(p1, p2);
+      if(a === 0 || b === 0) return 0;
+      const val = (a*a + b*b - c*c) / (2*a*b);
+      return Math.acos(Math.max(-1, Math.min(1, val))) * 180 / Math.PI;
+    };
+
+    const getExtVertex = (p1, p2, other) => {
+       const mid = {x: (p1.x+p2.x)/2, y: (p1.y+p2.y)/2};
+       const v = {x: p2.x-p1.x, y: p2.y-p1.y};
+       const len = Math.sqrt(v.x**2+v.y**2);
+       let n = {x: -v.y, y: v.x}; 
+       const toOther = {x: other.x-mid.x, y: other.y-mid.y};
+       if(n.x*toOther.x + n.y*toOther.y > 0) { n.x = -n.x; n.y = -n.y; }
+       const h = len * Math.sqrt(3)/2;
+       return {x: mid.x + n.x/len*h, y: mid.y + n.y/len*h};
+    };
+
+    const getLineIntersection = (p1, p2, p3, p4) => {
+        const d = (p1.x-p2.x)*(p3.y-p4.y) - (p1.y-p2.y)*(p3.x-p4.x);
+        if(d===0) return null;
+        const t = ((p1.x-p3.x)*(p3.y-p4.y) - (p1.y-p3.y)*(p3.x-p4.x))/d;
+        return {x: p1.x + t*(p2.x-p1.x), y: p1.y + t*(p2.y-p1.y)};
+    };
+
+    // ==========================================
+    // 核心元件
+    // ==========================================
+    const FermatGuidedTour = () => {
+      // --- 狀態管理 ---
+      const canvasRef = useRef(null);
+      const containerRef = useRef(null); 
+      const [size, setSize] = useState({ width: 800, height: 600 });
+      const [step, setStep] = useState(1); 
+      const [maxStepReached, setMaxStepReached] = useState(1); 
+
+      // 視圖控制
+      const [scale, setScale] = useState(1);
+      const [offset, setOffset] = useState({ x: 0, y: 0 });
+      const [isPanning, setIsPanning] = useState(false);
+      const [lastPanPoint, setLastPanPoint] = useState({ x: 0, y: 0 });
+
+      // 幾何資料
+      const defaultVertices = {
+        A: { x: 400, y: 150 }, 
+        B: { x: 300, y: 400 },
+        C: { x: 600, y: 400 },
+      };
+      const [vertices, setVertices] = useState(defaultVertices);
+      const [pPoint, setPPoint] = useState({ x: 450, y: 300 });
+      
+      // Step 5 專用：角 A 度數控制
+      const [angleAValue, setAngleAValue] = useState(130);
+
+      // 互動狀態
+      const [isDragging, setIsDragging] = useState(null);
+
+      // 實驗數據記錄
+      const [dataRecords, setDataRecords] = useState([]); 
+      const [hasFoundOptimal, setHasFoundOptimal] = useState(false); 
+      const [recordWarning, setRecordWarning] = useState('');
+
+      // 後續步驟控制
+      const [rotationAngle, setRotationAngle] = useState(0); 
+      const [pivot, setPivot] = useState('C'); 
+      
+      // Step 4 & 5 控制
+      const [constructionStep, setConstructionStep] = useState(0);
+      const [showObtuseProof, setShowObtuseProof] = useState(false); 
+
+      // --- 核心計算 ---
+      const constructionPoints = useMemo(() => {
+          const { A, B, C } = vertices;
+          return {
+              C_prime: getExtVertex(B, C, A), 
+              A_prime: getExtVertex(A, C, B), 
+              B_prime: getExtVertex(A, B, C), 
+          };
+      }, [vertices]);
+
+      const isogonicCenter = useMemo(() => {
+          const { A, B } = vertices;
+          const { A_prime, B_prime } = constructionPoints;
+          return getLineIntersection(A, constructionPoints.C_prime, B, A_prime); 
+      }, [vertices, constructionPoints]);
+
+      const exactFermat = useMemo(() => {
+        const { A, B, C } = vertices;
+        const angA = getAngle(B, A, C);
+        const angB = getAngle(A, B, C);
+        const angC = getAngle(A, C, B);
+        
+        if (angA >= 120) return { ...A, isVertex: true };
+        if (angB >= 120) return { ...B, isVertex: true };
+        if (angC >= 120) return { ...C, isVertex: true };
+
+        if (isogonicCenter) return { ...isogonicCenter, isVertex: false };
+        return { x: (A.x+B.x+C.x)/3, y: (A.y+B.y+C.y)/3, isVertex: false }; 
+      }, [vertices, isogonicCenter]);
+
+      const currentSum = dist(pPoint, vertices.A) + dist(pPoint, vertices.B) + dist(pPoint, vertices.C);
+      const minSum = useMemo(() => 
+        dist(exactFermat, vertices.A) + dist(exactFermat, vertices.B) + dist(exactFermat, vertices.C)
+      , [exactFermat, vertices]);
+      
+      const diff = currentSum - minSum;
+      const isOptimal = diff < 2; 
+
+      const targetGood = 3;
+      const targetPoor = 3;
+      const goodCount = dataRecords.filter(r => r.isOptimal).length;
+      const poorCount = dataRecords.filter(r => r.diff > 10).length;
+      const canProceedStep1 = goodCount >= targetGood && poorCount >= targetPoor;
+
+      useEffect(() => {
+        if (step === 1 && isOptimal) {
+            setHasFoundOptimal(true);
+            if (canProceedStep1 && maxStepReached < 2) {
+                setMaxStepReached(2);
+            }
+        }
+      }, [step, isOptimal, canProceedStep1, maxStepReached]);
+
+      useEffect(() => {
+        const updateSize = () => {
+          if (containerRef.current) {
+            const { offsetWidth, offsetHeight } = containerRef.current;
+            if (offsetWidth > 0 && offsetHeight > 0) {
+                setSize({ width: offsetWidth, height: offsetHeight });
+            }
+          }
+        };
+        updateSize();
+        window.addEventListener('resize', updateSize);
+        return () => window.removeEventListener('resize', updateSize);
+      }, []);
+
+      const handleReset = () => {
+          const cx = size.width / 2;
+          const cy = size.height / 2;
+          
+          if (step === 5) {
+              updateObtuseTriangle(130, cx, cy);
+              setAngleAValue(130);
+              setShowObtuseProof(false);
+          } else {
+              setVertices({
+                  A: { x: cx, y: cy - 150 },
+                  B: { x: cx - 100, y: cy + 100 },
+                  C: { x: cx + 150, y: cy + 100 },
+              });
+              setPPoint({x: cx + 20, y: cy + 20});
+              setStep(1); 
+              setMaxStepReached(1);
+              setDataRecords([]);
+              setHasFoundOptimal(false);
+          }
+          
+          setIsDragging(null); 
+          setRotationAngle(0); 
+          setPivot('C');
+          setScale(1);
+          setOffset({x:0, y:0});
+          setConstructionStep(0);
+          setRecordWarning('');
+      };
+
+      const updateObtuseTriangle = (angleDeg, cx, cy) => {
+          const baseWidth = 360; 
+          const B = { x: cx - baseWidth/2, y: cy + 100 };
+          const C = { x: cx + baseWidth/2, y: cy + 100 };
+          
+          const halfBase = baseWidth / 2;
+          const angleRad = toRad(angleDeg);
+          const height = halfBase / Math.tan(angleRad / 2);
+          
+          const A = { x: cx, y: B.y - height };
+          
+          setVertices({ A, B, C });
+          setPPoint({ x: A.x, y: A.y + 40 });
+      };
+
+      useEffect(() => {
+          if (step === 5) {
+              const cx = size.width / 2;
+              const cy = size.height / 2;
+              updateObtuseTriangle(130, cx, cy);
+              setAngleAValue(130);
+              setShowObtuseProof(false);
+          }
+      }, [step, size]); 
+
+      const handleAngleChange = (e) => {
+          const deg = parseInt(e.target.value);
+          setAngleAValue(deg);
+          const cx = size.width / 2;
+          const cy = size.height / 2;
+          updateObtuseTriangle(deg, cx, cy);
+      };
+
+      const recordData = () => {
+          setRecordWarning('');
+          if (dataRecords.length > 0) {
+              const lastRecord = dataRecords[0];
+              if (dist(pPoint, lastRecord.p) < 5) {
+                  setRecordWarning('請移動 P 點後再記錄');
+                  return;
+              }
+          }
+          const angAPB = getAngle(vertices.A, pPoint, vertices.B);
+          const angBPC = getAngle(vertices.B, pPoint, vertices.C);
+          const angCPA = getAngle(vertices.C, pPoint, vertices.A);
+          
+          const newRecord = {
+              id: Date.now(),
+              p: { ...pPoint }, 
+              sum: currentSum,
+              diff: currentSum - minSum,
+              angles: [angAPB, angBPC, angCPA],
+              isOptimal: isOptimal
+          };
+          
+          const newDataRecords = [newRecord, ...dataRecords];
+          setDataRecords(newDataRecords);
+          if (newRecord.isOptimal) {
+              setHasFoundOptimal(true);
+          }
+      };
+
+      const screenToWorld = (sx, sy) => {
+        return {
+            x: (sx - offset.x) / scale,
+            y: (sy - offset.y) / scale
+        };
+      };
+
+      // --- 繪圖邏輯 ---
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = size.width;
+        canvas.height = size.height;
+
+        ctx.clearRect(0, 0, size.width, size.height);
+        
+        ctx.save();
+        ctx.translate(offset.x, offset.y);
+        ctx.scale(scale, scale);
+
+        const drawLine = (p1, p2, color='#94a3b8', width=1, dash=[]) => {
+          ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash); ctx.stroke(); ctx.setLineDash([]);
+        };
+        const drawDot = (p, color, r=5) => {
+          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fillStyle = color; ctx.fill();
+        };
+        const drawText = (txt, p, offset={x:0,y:0}, color='#334155', font='14px sans-serif') => {
+          ctx.fillStyle = color; ctx.font = font; ctx.fillText(txt, p.x+offset.x, p.y+offset.y);
+        };
+
+        const { A, B, C } = vertices;
+        const { A_prime, B_prime, C_prime } = constructionPoints; 
+
+        const isRotating = step === 2 || step === 3;
+        
+        if (!isRotating) {
+            drawLine(A, B, '#334155', 2);
+            drawLine(B, C, '#334155', 2);
+            drawLine(C, A, '#334155', 2);
+        } else {
+            if (pivot === 'C') { drawLine(B, C, '#334155', 2); drawLine(A, C, '#94a3b8', 1, [5,5]); drawLine(A, B, '#cbd5e1', 1); }
+            else if (pivot === 'B') { drawLine(A, B, '#334155', 2); drawLine(B, C, '#94a3b8', 1, [5,5]); drawLine(A, C, '#cbd5e1', 1); }
+            else { drawLine(A, C, '#334155', 2); drawLine(A, B, '#94a3b8', 1, [5,5]); drawLine(B, C, '#cbd5e1', 1); }
+        }
+
+        drawDot(A, '#ef4444'); drawText('A', A, {x:-10,y:-10});
+        drawDot(B, '#10b981'); drawText('B', B, {x:-20,y:20});
+        drawDot(C, '#f59e0b'); drawText('C', C, {x:10,y:20});
+
+        // Step 1
+        if (step === 1) {
+            drawLine(pPoint, A, '#3b82f6', 1.5);
+            drawLine(pPoint, B, '#3b82f6', 1.5);
+            drawLine(pPoint, C, '#3b82f6', 1.5);
+            
+            const pColor = isOptimal ? '#059669' : '#2563eb';
+            drawDot(pPoint, pColor, 6);
+            drawText('P', pPoint, {x:10,y:0}, pColor);
+        }
+
+        // Step 2 & 3
+        if (step === 2 || step === 3) {
+            const rotDeg = step === 3 ? 60 : rotationAngle; 
+            let center, movingPt1, movingPt2, fixedPt1, targetLabel;
+            
+            if (pivot === 'C') { center = C; movingPt1 = A; movingPt2 = pPoint; fixedPt1 = B; targetLabel = "A'"; } 
+            else if (pivot === 'B') { center = B; movingPt1 = C; movingPt2 = pPoint; fixedPt1 = A; targetLabel = "C'"; } 
+            else { center = A; movingPt1 = B; movingPt2 = pPoint; fixedPt1 = C; targetLabel = "B'"; } 
+
+            const rotPt1 = rotatePoint(movingPt1, center, rotDeg);
+            const rotPt2 = rotatePoint(movingPt2, center, rotDeg);
+
+            ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(movingPt1.x, movingPt1.y); ctx.lineTo(movingPt2.x, movingPt2.y);
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.05)'; ctx.fill(); 
+            ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(rotPt1.x, rotPt1.y); ctx.lineTo(rotPt2.x, rotPt2.y);
+            ctx.fillStyle = 'rgba(249, 115, 22, 0.1)'; ctx.fill(); 
+
+            drawDot(pPoint, '#2563eb', 5); drawText('P', pPoint, {x:-10,y:-5}, '#2563eb');
+            drawDot(rotPt2, '#2563eb', 4); drawText(step===3||rotDeg===60?"P'":"", rotPt2, {x:10,y:10}, '#2563eb');
+            drawDot(rotPt1, '#ea580c'); drawText(step===3||rotDeg===60?targetLabel:"", rotPt1, {x:10,y:-10}, '#ea580c');
+
+            const startNode = fixedPt1; 
+            ctx.beginPath(); ctx.moveTo(startNode.x, startNode.y); ctx.lineTo(pPoint.x, pPoint.y);
+            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(pPoint.x, pPoint.y); ctx.lineTo(rotPt2.x, rotPt2.y);
+            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(rotPt2.x, rotPt2.y); ctx.lineTo(rotPt1.x, rotPt1.y);
+            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3; ctx.stroke();
+            
+            if (rotDeg === 60) {
+                drawLine(center, rotPt1, '#ea580c', 1, [2,2]); 
+            }
+        }
+
+        // Step 4
+        if (step === 4) {
+            const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2,2]); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]); };
+            
+            const drawRotationTrace = (center, start, end) => {
+                const angleStart = Math.atan2(start.y - center.y, start.x - center.x);
+                const angleEnd = Math.atan2(end.y - center.y, end.x - center.x);
+                ctx.beginPath();
+                ctx.arc(center.x, center.y, dist(center, start), angleStart, angleEnd, Math.abs(angleStart - angleEnd) > Math.PI ? angleStart < angleEnd : angleStart > angleEnd); 
+                ctx.strokeStyle = '#3b82f6'; ctx.setLineDash([4,4]); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
+            };
+
+            const drawRotatedTriangle = (origin, center, targetEqVertex) => {
+                const angleRad = Math.atan2(targetEqVertex.y - center.y, targetEqVertex.x - center.x) - Math.atan2(origin.y - center.y, origin.x - center.x);
+                const pRot = rotatePointByAngle(exactFermat, center, angleRad);
+                const originRot = targetEqVertex; 
+                
+                ctx.beginPath(); ctx.moveTo(exactFermat.x, exactFermat.y); ctx.lineTo(center.x, center.y); ctx.lineTo(origin.x, origin.y); ctx.closePath();
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.1)'; ctx.fill(); 
+                
+                ctx.beginPath(); ctx.moveTo(pRot.x, pRot.y); ctx.lineTo(center.x, center.y); ctx.lineTo(originRot.x, originRot.y); ctx.closePath();
+                ctx.fillStyle = 'rgba(249, 115, 22, 0.2)'; ctx.fill(); 
+                
+                drawRotationTrace(center, exactFermat, pRot);
+                drawDot(pRot, '#ea580c', 3);
+            };
+
+            if (constructionStep >= 1) {
+                drawPoly([B, C, C_prime], 'rgba(16, 185, 129, 0.1)'); 
+                drawDot(C_prime, '#059669', 3); drawText("C'", C_prime, {x:5,y:5}, '#059669');
+                drawLine(A, C_prime, '#ef4444', 1.5); 
+                if (exactFermat.isVertex === false) drawRotatedTriangle(C, B, C_prime);
+            }
+            
+            if (constructionStep >= 2) {
+                drawPoly([A, C, A_prime], 'rgba(16, 185, 129, 0.1)'); 
+                drawDot(A_prime, '#059669', 3); drawText("A'", A_prime, {x:5,y:5}, '#059669');
+                drawLine(B, A_prime, '#ef4444', 1.5); 
+                if (exactFermat.isVertex === false) drawRotatedTriangle(A, C, A_prime);
+                
+                if (exactFermat.isVertex === false) {
+                    drawDot(exactFermat, '#ef4444', 5); 
+                    drawText("O", exactFermat, {x: 8, y: -8}, '#ef4444');
+                }
+            }
+
+            if (constructionStep >= 3) {
+                drawPoly([A, B, B_prime], 'rgba(16, 185, 129, 0.1)'); 
+                drawDot(B_prime, '#059669', 3); drawText("B'", B_prime, {x:5,y:5}, '#059669');
+                drawLine(C, B_prime, '#ef4444', 1.5);
+                if (exactFermat.isVertex === false) drawRotatedTriangle(B, A, B_prime);
+            }
+        }
+
+        // Step 5
+        if (step === 5) {
+            drawLine(pPoint, A, '#3b82f6', 1.5);
+            drawLine(pPoint, B, '#3b82f6', 1.5);
+            drawLine(pPoint, C, '#3b82f6', 1.5);
+            
+            if (isogonicCenter) {
+                drawDot(isogonicCenter, '#9ca3af', 4);
+                drawText("O", isogonicCenter, {x:10,y:0}, '#9ca3af');
+                ctx.setLineDash([4,4]);
+                drawLine(A, isogonicCenter, '#cbd5e1');
+                drawLine(B, isogonicCenter, '#cbd5e1');
+                drawLine(C, isogonicCenter, '#cbd5e1');
+                ctx.setLineDash([]);
+            }
+
+            drawDot(A, '#ef4444', 6);
+            drawText("Min (A)", A, {x:-10, y:-30}, '#dc2626'); 
+
+            const pColor = isOptimal ? '#059669' : '#2563eb';
+            drawDot(pPoint, pColor, 6);
+            drawText('P', pPoint, {x:10,y:0}, pColor);
+
+            if (showObtuseProof) {
+                const targetPt = A_prime; 
+                const startNode = B;
+                const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2,2]); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]); };
+                drawPoly([A, C, A_prime], 'rgba(16, 185, 129, 0.1)'); 
+                drawDot(A_prime, '#059669', 3); drawText("A'", A_prime, {x:5,y:5}, '#059669');
+
+                drawLine(startNode, targetPt, '#ef4444', 1.5, [5,5]);
+
+                const angAC = Math.atan2(A.y-C.y, A.x-C.x);
+                const angACA_p = Math.atan2(targetPt.y-C.y, targetPt.x-C.x);
+                const angleDiff = angACA_p - angAC;
+                
+                const pRot = rotatePointByAngle(pPoint, C, angleDiff);
+                drawDot(pRot, '#2563eb', 4); drawText("P'", pRot, {x:5,y:5}, '#2563eb');
+
+                ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(pPoint.x, pPoint.y); ctx.lineTo(C.x, C.y); ctx.closePath();
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.1)'; ctx.fill();
+
+                ctx.beginPath(); ctx.moveTo(targetPt.x, targetPt.y); ctx.lineTo(pRot.x, pRot.y); ctx.lineTo(C.x, C.y); ctx.closePath();
+                ctx.fillStyle = 'rgba(249, 115, 22, 0.2)'; ctx.fill();
+
+                ctx.beginPath(); ctx.moveTo(startNode.x, startNode.y); ctx.lineTo(pPoint.x, pPoint.y);
+                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(pPoint.x, pPoint.y); ctx.lineTo(pRot.x, pRot.y);
+                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(pRot.x, pRot.y); ctx.lineTo(targetPt.x, targetPt.y);
+                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+            }
+        }
+
+        ctx.restore();
+      }, [vertices, pPoint, step, isOptimal, rotationAngle, pivot, scale, offset, exactFermat, constructionStep, size, constructionPoints, showObtuseProof, isogonicCenter]);
+
+      // --- 互動邏輯 ---
+      const handleMouseDown = (e) => {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const worldPt = screenToWorld(sx, sy);
+
+        let hitTarget = null;
+
+        const allowVertexDrag = step !== 5; 
+        const allowPDrag = true; 
+
+        if (allowPDrag && dist(worldPt, pPoint) < 30 / scale) hitTarget = 'P';
+        else if (allowVertexDrag) {
+             if (dist(worldPt, vertices.A) < 25 / scale) hitTarget = 'A';
+             else if (dist(worldPt, vertices.B) < 25 / scale) hitTarget = 'B';
+             else if (dist(worldPt, vertices.C) < 25 / scale) hitTarget = 'C';
+        }
+
+        if (hitTarget) {
+            setIsDragging(hitTarget);
+            setRecordWarning(''); 
+        } else {
+            setIsPanning(true);
+            setLastPanPoint({ x: sx, y: sy });
+        }
+      };
+
+      const handleMouseMove = (e) => {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        
+        if (isPanning) {
+            const dx = sx - lastPanPoint.x;
+            const dy = sy - lastPanPoint.y;
+            setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+            setLastPanPoint({ x: sx, y: sy });
+            return;
+        }
+
+        if (!isDragging) return;
+        const worldPt = screenToWorld(sx, sy);
+
+        if(isDragging === 'P') {
+            setPPoint({x: worldPt.x, y: worldPt.y});
+        } else {
+            setVertices(v => ({...v, [isDragging]:{x: worldPt.x, y: worldPt.y}}));
+        }
+      };
+      
+      const handleMouseUp = () => {
+        setIsDragging(null);
+        setIsPanning(false);
+      };
+
+      const handleTouchStart = (e) => {
+        if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
+        }
+      };
+
+      const handleTouchMove = (e) => {
+        if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+        }
+      };
+
+      const handleTouchEnd = () => handleMouseUp();
+
+      const StepButton = ({ num, title }) => (
+          <button 
+            onClick={() => { if(maxStepReached >= num) { setStep(num); if(num===2) setRotationAngle(0); } }}
+            disabled={maxStepReached < num}
+            className={`flex flex-col items-center z-10 w-1/5 transition-opacity ${maxStepReached >= num ? 'opacity-100 cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+          >
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold mb-1 transition-colors ${step >= num ? 'bg-blue-600 text-white' : (maxStepReached >= num ? 'bg-blue-200 text-blue-800' : 'bg-slate-200 text-slate-400')}`}>
+                  {num}
+              </div>
+              <span className="text-xs font-bold text-slate-600 hidden sm:block text-center whitespace-nowrap px-1">{title}</span>
+          </button>
+      );
+
+      return (
+        <div className="flex flex-col items-center bg-slate-50 p-6 rounded-xl shadow-lg w-full max-w-6xl mx-auto font-sans">
+          <div className="w-full mb-4">
+              <h2 className="text-2xl font-bold text-slate-800 text-center mb-4">費馬點探究：從實驗到證明</h2>
+              <div className="flex justify-between relative mb-2 px-2 overflow-x-auto">
+                  <StepButton num={1} title="實驗數據" />
+                  <StepButton num={2} title="旋轉實驗" />
+                  <StepButton num={3} title="幾何證明" />
+                  <StepButton num={4} title="構造統整" />
+                  <StepButton num={5} title="極端狀況" />
+                  <div className="absolute top-4 left-0 w-full h-1 bg-slate-200 -z-0 mx-4" style={{width: 'calc(100% - 2rem)'}}>
+                      <div className="h-full bg-blue-500 transition-all duration-500" style={{width: `${(maxStepReached-1)*25}%`}}></div>
+                  </div>
+              </div>
+          </div>
+
+          <div className="flex w-full gap-4 h-[550px]">
+              <div ref={containerRef} className="relative border-2 border-slate-200 rounded-lg overflow-hidden bg-white shadow-inner cursor-crosshair touch-none flex-1">
+                <canvas 
+                    ref={canvasRef}
+                    style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
+                    onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    onTouchCancel={handleTouchEnd}
+                />
+
+                {step === 1 && (
+                    <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-2 pointer-events-none">
+                        {recordWarning && (
+                            <div className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-xs font-bold shadow-md animate-bounce flex items-center gap-1">
+                                <AlertTriangle size={14}/> {recordWarning}
+                            </div>
+                        )}
+                        <button 
+                            onClick={recordData}
+                            className="px-6 py-3 bg-purple-600 text-white rounded-full font-bold shadow-lg hover:bg-purple-700 hover:scale-105 transition-all flex items-center gap-2 pointer-events-auto"
+                        >
+                            <Plus size={20}/> 記錄目前數據
+                        </button>
+                    </div>
+                )}
+
+                <div className="absolute bottom-4 right-4 flex flex-col gap-2 bg-white/90 p-2 rounded-lg shadow border border-slate-200 pointer-events-none">
+                    <div className="pointer-events-auto flex flex-col gap-2">
+                        <button onClick={()=>setScale(s=>Math.min(s*1.2, 3))} className="p-1 hover:bg-slate-100 rounded"><ZoomIn size={20}/></button>
+                        <button onClick={()=>setScale(s=>Math.max(s/1.2, 0.5))} className="p-1 hover:bg-slate-100 rounded"><ZoomOut size={20}/></button>
+                        <button onClick={()=>{setScale(1); setOffset({x:0,y:0})}} className="p-1 hover:bg-slate-100 rounded"><RefreshCw size={20}/></button>
+                    </div>
+                    <div className="p-1 text-slate-400 flex justify-center"><Move size={20}/></div>
+                </div>
+
+                {(step === 2 || step === 3) && (
+                    <div className="absolute top-4 left-4 bg-white/95 backdrop-blur p-4 rounded-lg shadow-lg border border-blue-100 max-w-xs animate-in fade-in slide-in-from-left-2 pointer-events-none">
+                        <div className="pointer-events-auto">
+                            <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><RotateCcw size={16}/> 旋轉說明 (中心: {pivot})</h4>
+                            <div className="text-sm text-slate-700 space-y-2">
+                                <p>將 <span className="font-bold text-orange-600">△{pivot === 'C' ? 'APC' : pivot === 'B' ? 'BPC' : 'APB'}</span> 繞 {pivot} 點旋轉 {step===3?60:rotationAngle}°。</p>
+                                {step === 3 && (
+                                    <div className="text-slate-600 text-xs mt-2 bg-blue-50 p-2 rounded border border-blue-100">
+                                        <p>現在請拖動 P 點，觀察藍色折線的變化。</p>
+                                        <p className="mt-1 font-bold text-blue-800">當折線變成什麼形狀時，路徑總和（數值）會達到最小？</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-lg border border-slate-200 shadow text-sm font-mono text-slate-700 min-w-[180px] pointer-events-none">
+                     <div className="flex justify-between mb-1">
+                         <span>目前總和:</span> 
+                         <span className={`font-bold ${isOptimal?'text-green-600':'text-blue-600'}`}>{currentSum.toFixed(3)}</span>
+                     </div>
+                     <div className="flex justify-between border-t border-slate-200 pt-1 text-slate-500">
+                         <span>目標極值:</span>
+                         <span className="font-bold">{minSum.toFixed(3)}</span>
+                     </div>
+                </div>
+              </div>
+
+              <div className="w-80 flex flex-col gap-4">
+                  
+                  {step === 1 && (
+                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col h-full animate-in slide-in-from-right-4">
+                         <div className="mb-4">
+                             <h3 className="font-bold text-lg text-slate-800 mb-2 flex items-center gap-2"><Search size={20}/> 1. 實驗數據室</h3>
+                             <div className="grid grid-cols-2 gap-2 mb-2">
+                                 <div className={`p-2 rounded border text-center ${goodCount >= targetGood ? 'bg-green-100 border-green-300' : 'bg-slate-100'}`}>
+                                     <div className="text-xs text-slate-500">良好數據</div>
+                                     <div className={`font-bold ${goodCount >= targetGood ? 'text-green-700' : 'text-slate-700'}`}>{goodCount} / {targetGood}</div>
+                                 </div>
+                                 <div className={`p-2 rounded border text-center ${poorCount >= targetPoor ? 'bg-red-100 border-red-300' : 'bg-slate-100'}`}>
+                                     <div className="text-xs text-slate-500">差異數據</div>
+                                     <div className={`font-bold ${poorCount >= targetPoor ? 'text-red-700' : 'text-slate-700'}`}>{poorCount} / {targetPoor}</div>
+                                 </div>
+                             </div>
+                             <p className="text-xs text-slate-500">請透過移動 P 點收集這兩種數據，觀察角度變化。</p>
+                         </div>
+
+                         <div className="flex-1 overflow-y-auto space-y-2 pr-1 border-t border-b border-slate-200 py-2 mb-2 bg-white rounded-md">
+                             <div className="grid grid-cols-4 text-xs font-bold text-slate-500 px-2 pb-1 border-b">
+                                 <span>總和</span>
+                                 <span className="text-center">誤差</span>
+                                 <span className="col-span-2 text-center">角度 (A/B/C)</span>
+                             </div>
+                             {dataRecords.length === 0 && (
+                                 <div className="text-center text-slate-400 py-10 text-sm">
+                                     尚未記錄數據<br/>試著移動 P 點並記錄
+                                 </div>
+                             )}
+                             {dataRecords.map((rec) => (
+                                 <div key={rec.id} className={`grid grid-cols-4 items-center p-2 rounded border text-xs ${rec.isOptimal ? 'bg-green-50 border-green-200' : rec.diff > 10 ? 'bg-red-50 border-red-200' : 'bg-white border-slate-100'}`}>
+                                     <div className="font-mono font-bold text-slate-700">{rec.sum.toFixed(3)}</div>
+                                     <div className={`text-center font-mono ${rec.isOptimal ? 'text-green-600 font-bold' : rec.diff > 10 ? 'text-red-500' : 'text-slate-500'}`}>
+                                         {rec.isOptimal ? '✔' : `+${rec.diff.toFixed(1)}`}
+                                     </div>
+                                     <div className="col-span-2 text-center font-mono text-slate-500 flex justify-center gap-1">
+                                         {rec.angles.map((a, idx) => (
+                                             <span key={idx} className={Math.abs(a - 120) < 2 ? 'text-green-600 font-bold' : 'text-slate-400'}>
+                                                 {a.toFixed(1)}
+                                             </span>
+                                         ))}
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+
+                         <div className="flex justify-between items-center">
+                             <button onClick={() => setDataRecords([])} className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1">
+                                 <Trash2 size={12}/> 清除
+                             </button>
+                             <button 
+                                onClick={() => { setStep(2); setMaxStepReached(Math.max(maxStepReached, 2)); setRotationAngle(0); }}
+                                disabled={!canProceedStep1}
+                                className={`px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${canProceedStep1 ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                             >
+                                {canProceedStep1 ? '下一步' : '收集更多數據'} <ArrowRight size={16}/>
+                             </button>
+                         </div>
+                     </div>
+                  )}
+
+                  {step > 1 && step < 4 && (
+                      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full flex flex-col shadow-sm animate-in fade-in">
+                          <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                              {step===2 ? <RotateCcw size={20}/> : <CheckCircle size={20}/>}
+                              {step===2 ? '2. 旋轉實驗' : '3. 幾何證明'}
+                          </h3>
+                          
+                          <div className="flex-1">
+                              <div className="space-y-6">
+                                  <div>
+                                      <label className="text-xs font-bold text-slate-500 mb-2 block">選擇旋轉中心</label>
+                                      <div className="flex gap-2">
+                                          {['A', 'B', 'C'].map((pt) => (
+                                              <button
+                                                key={pt}
+                                                onClick={() => { setPivot(pt); setRotationAngle(0); if(step===3) setStep(2); }}
+                                                className={`flex-1 py-2 rounded border font-bold text-sm transition-all ${pivot === pt ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                              >
+                                                  {pt} 點
+                                              </button>
+                                          ))}
+                                      </div>
+                                  </div>
+
+                                  <div>
+                                      <label className="text-xs font-bold text-slate-500 mb-2 block flex justify-between">
+                                          <span>旋轉角度</span>
+                                          <span className="text-orange-600 font-mono">{step===3 ? 60 : rotationAngle}°</span>
+                                      </label>
+                                      <input 
+                                        type="range" min="0" max="60" value={step === 3 ? 60 : rotationAngle} 
+                                        onChange={(e)=>{ setRotationAngle(parseInt(e.target.value)); if(step===3) setStep(2); }}
+                                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                                      />
+                                  </div>
+
+                                  {step === 2 && (
+                                      <p className="text-xs text-slate-500">
+                                          試著旋轉三角形，觀察邊長關係。
+                                      </p>
+                                  )}
+                              </div>
+                          </div>
+
+                          <div className="mt-auto pt-4 border-t border-slate-100 flex justify-between gap-2">
+                               <button onClick={handleReset} className="px-3 py-2 border rounded hover:bg-slate-50 text-slate-500 text-sm"><RefreshCw size={16}/></button>
+                               {step === 2 && (
+                                   <button 
+                                      onClick={() => { setStep(3); setMaxStepReached(Math.max(maxStepReached, 3)); }} 
+                                      disabled={rotationAngle < 60}
+                                      className="flex-1 bg-blue-600 text-white rounded font-bold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      看證明結論
+                                    </button>
+                               )}
+                               {step === 3 && (
+                                   <button 
+                                      onClick={() => { setStep(4); setMaxStepReached(Math.max(maxStepReached, 4)); setConstructionStep(0); }} 
+                                      className="flex-1 bg-emerald-600 text-white rounded font-bold text-sm hover:bg-emerald-700"
+                                    >
+                                      最後統整
+                                    </button>
+                               )}
+                          </div>
+                      </div>
+                  )}
+
+                  {step === 4 && (
+                      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full flex flex-col shadow-sm animate-in fade-in">
+                          <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                              <PenTool size={20}/> 4. 構造統整
+                          </h3>
+                          
+                          <div className="flex-1 space-y-4">
+                              {constructionStep === 0 && (
+                                  <div className="space-y-4 animate-in fade-in">
+                                      <p className="text-sm text-slate-600">
+                                          首先，在 <span className="font-bold text-orange-600">BC</span> 邊外作正三角形。
+                                          <br/>(回想：以 B 為中心旋轉時，最短路徑是 AC')
+                                      </p>
+                                      <button 
+                                        onClick={() => setConstructionStep(1)}
+                                        className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-md animate-in slide-in-from-bottom-2"
+                                      >
+                                          1. 畫出連線 AC'
+                                      </button>
+                                  </div>
+                              )}
+
+                              {constructionStep === 1 && (
+                                  <div className="space-y-4 animate-in fade-in">
+                                      <p className="text-sm text-slate-600">
+                                          接著，在 <span className="font-bold text-orange-600">AC</span> 邊外作正三角形。
+                                          <br/>(回想：以 C 為中心旋轉時，最短路徑是 BA')
+                                      </p>
+                                      <div className="p-3 bg-blue-50 border border-blue-100 rounded text-xs text-blue-800 mb-2">
+                                          💡 提示：旋轉後的 A 點，位置剛好就是 A'！
+                                      </div>
+                                      <button 
+                                        onClick={() => setConstructionStep(2)}
+                                        className="w-full py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                                      >
+                                          2. 畫出連線 BA'
+                                      </button>
+                                  </div>
+                              )}
+
+                              {constructionStep === 2 && (
+                                  <div className="p-3 bg-purple-50 rounded border border-purple-100 text-sm animate-in fade-in">
+                                      <p className="mb-2">現在有了交點 <span className="font-bold text-red-600">O</span>。</p>
+                                      <p className="mb-2 text-slate-600">最後，在 <span className="font-bold text-orange-600">AB</span> 邊外作正三角形。</p>
+                                      <p className="mb-2 font-bold text-purple-800 bg-white p-2 rounded border border-purple-200">
+                                          關鍵探究：<br/>
+                                          請試著拖動三角形頂點。<br/>
+                                          你覺得連線 CB' 會經過交點 O 嗎？
+                                      </p>
+                                      <button 
+                                        onClick={() => setConstructionStep(3)}
+                                        className="w-full py-2 bg-purple-600 text-white rounded font-bold hover:bg-purple-700 transition-colors shadow-sm flex items-center justify-center gap-2"
+                                      >
+                                          <HelpCircle size={16}/> 3. 畫線揭曉答案
+                                      </button>
+                                  </div>
+                              )}
+
+                              {constructionStep === 3 && (
+                                  <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-lg animate-in zoom-in">
+                                      <p className="text-emerald-800 text-sm font-bold flex items-center gap-2 mb-1">
+                                          <CheckCircle size={16}/> 驗證成功：三線共點！
+                                      </p>
+                                      <p className="text-xs text-slate-600">
+                                          恭喜你完成了費馬點的探究之旅！
+                                      </p>
+                                  </div>
+                              )}
+                          </div>
+
+                          <div className="mt-auto pt-4 border-t border-slate-100 flex justify-center">
+                               <button onClick={handleReset} className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-bold text-slate-600 flex items-center gap-2">
+                                  <RefreshCw size={16}/> 重新開始探究
+                               </button>
+                               
+                               {constructionStep > 0 && (
+                                   <button onClick={() => setConstructionStep(s => s-1)} className="ml-2 px-3 py-2 border rounded hover:bg-slate-50 text-slate-600 text-sm flex items-center gap-1">
+                                       <ArrowLeft size={14}/> 上一步
+                                   </button>
+                               )}
+                               
+                               {constructionStep === 3 && (
+                                   <button 
+                                      onClick={() => { setStep(5); setMaxStepReached(5); }}
+                                      className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded font-bold text-sm hover:bg-emerald-700"
+                                    >
+                                      下一步：極端狀況
+                                    </button>
+                               )}
+                          </div>
+                      </div>
+                  )}
+
+                  {step === 5 && (
+                      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full flex flex-col shadow-sm animate-in fade-in">
+                          <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                              <AlertTriangle size={20}/> 5. 極端狀況
+                          </h3>
+                          
+                          <div className="flex-1 space-y-4">
+                              <div className="text-sm text-slate-600 bg-orange-50 p-3 rounded border border-orange-100">
+                                  <p className="font-bold text-orange-800 mb-1">當角 A 大於 120° 時...</p>
+                                  <p>觀察畫面上的：</p>
+                                  <ul className="list-disc list-inside pl-1 space-y-1">
+                                      <li><span className="font-bold text-gray-500">灰色點 O</span>：理論交點 (跑去哪了？)</li>
+                                      <li><span className="font-bold text-red-600">紅色點 Min</span>：實際最小值。</li>
+                                  </ul>
+                              </div>
+                              
+                              <div className="space-y-2">
+                                  <label className="text-xs font-bold text-slate-500 flex justify-between">
+                                      <span>調整角 A 度數</span>
+                                      <span className="text-blue-600 font-mono">{angleAValue}°</span>
+                                  </label>
+                                  <input 
+                                      type="range" min="120" max="175" value={angleAValue} 
+                                      onChange={handleAngleChange}
+                                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                  />
+                              </div>
+
+                              <div className="space-y-2">
+                                  <button 
+                                    onClick={() => setShowObtuseProof(!showObtuseProof)}
+                                    className={`w-full py-3 px-4 rounded-lg border flex items-center justify-between transition-all ${showObtuseProof ? 'bg-blue-600 text-white border-blue-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+                                  >
+                                      <span className="font-bold">{showObtuseProof ? '隱藏旋轉觀點' : '顯示旋轉觀點'}</span>
+                                      {showObtuseProof ? <EyeOff size={18}/> : <Eye size={18}/>}
+                                  </button>
+                              </div>
+
+                              {showObtuseProof && (
+                                  <div className="text-xs text-blue-800 bg-blue-50 p-3 rounded border border-blue-100 animate-in fade-in">
+                                      <p>觀察紅色的虛線 <span className="font-bold">B → A'</span>（這是理論上的最短路徑直線）。</p>
+                                      <p className="mt-2">這條線沒有經過三角形內部！所以我們只能停在邊界上（頂點 A），這就是最好的解。</p>
+                                  </div>
+                              )}
+                          </div>
+
+                          <div className="mt-auto pt-4 border-t border-slate-100 flex justify-center">
+                               <button onClick={handleReset} className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-bold text-slate-600 flex items-center gap-2">
+                                  <RefreshCw size={16}/> 重新開始探究
+                               </button>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+        </div>
+      );
+    };
+
+    // 渲染應用程式
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<FermatGuidedTour />);
+  </script>
+</body>
+</html>

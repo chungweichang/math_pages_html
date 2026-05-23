@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <!-- 加入 user-scalable=no 防止手機操作 3D 時意外縮放整個網頁 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>正方體與菱形十二面體變換演示</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Noto Sans TC', sans-serif; background-color: #1a1a1a; color: white; user-select: none; -webkit-tap-highlight-color: transparent; }
+        #container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 0; }
+        
+        /* --- HUD 介面樣式 --- */
+        
+        /* 1. 左上角：模式切換 */
+        #hud-top-left {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap; /* 允許換行以適應小螢幕 */
+            max-width: 70%;
+        }
+        
+        .mode-btn {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #555;
+            color: #ddd;
+            padding: 10px 18px; /* 加大觸控區 */
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+            backdrop-filter: blur(3px);
+            white-space: nowrap;
+        }
+        
+        .mode-btn:hover { background: rgba(50, 50, 50, 0.8); }
+        
+        .mode-btn.active {
+            background: rgba(77, 184, 255, 0.3);
+            border-color: #4db8ff;
+            color: #4db8ff;
+            font-weight: bold;
+            box-shadow: 0 0 10px rgba(77, 184, 255, 0.2);
+        }
+
+        /* 2. 右上角：顯示選項 */
+        #hud-top-right {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid #444;
+            backdrop-filter: blur(3px);
+            display: flex;
+            flex-direction: column;
+            gap: 12px; /* 增加間距防誤觸 */
+        }
+        
+        .chk-label {
+            display: flex;
+            align-items: center;
+            font-size: 0.9rem;
+            cursor: pointer;
+            color: #ccc;
+        }
+        .chk-label:hover { color: #fff; }
+        /* 加大 checkbox */
+        .chk-label input { 
+            margin-right: 10px; 
+            accent-color: #4db8ff; 
+            width: 18px; 
+            height: 18px; 
+        }
+
+        /* 3. 正下方：變換進度滑桿 */
+        #hud-bottom {
+            position: absolute;
+            bottom: 40px; /* 稍微抬高 */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50%;
+            max-width: 500px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 12px 25px;
+            border-radius: 30px;
+            border: 1px solid #555;
+            backdrop-filter: blur(3px);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        #slider-label { font-size: 1rem; font-weight: bold; white-space: nowrap; }
+        #progress-val { color: #4db8ff; min-width: 45px; text-align: right; font-weight: bold; font-family: monospace; font-size: 1.1rem; }
+        
+        input[type=range] {
+            flex-grow: 1;
+            cursor: pointer;
+            height: 8px; /* 加粗滑桿 */
+            accent-color: #4db8ff;
+        }
+
+        /* 4. 左下角：說明文字 (已上移) */
+        #hud-bottom-left {
+            position: absolute;
+            bottom: 110px; 
+            left: 20px;
+            width: 280px;
+            z-index: 9; /* 比滑桿低一點 */
+            pointer-events: none; 
+        }
+        
+        .description {
+            font-size: 0.9rem;
+            color: #ccc;
+            line-height: 1.6;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #4db8ff;
+            backdrop-filter: blur(2px);
+            text-shadow: 1px 1px 2px black;
+        }
+        .highlight { color: #ffeb3b; font-weight: bold; }
+
+        /* 5. 右下角：縮放按鈕 */
+        #hud-bottom-right {
+            position: absolute;
+            bottom: 40px;
+            right: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .zoom-btn {
+            width: 48px; /* 加大按鈕 */
+            height: 48px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid #555;
+            color: white;
+            font-size: 1.8rem;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.1s;
+            backdrop-filter: blur(3px);
+            user-select: none;
+            touch-action: manipulation; /* 優化觸控反應 */
+        }
+        
+        .zoom-btn:hover { background: rgba(77, 184, 255, 0.3); border-color: #4db8ff; }
+        .zoom-btn:active { transform: scale(0.95); }
+
+        /* --- 手機/平板 響應式調整 (RWD) --- */
+        @media (max-width: 768px) {
+            #hud-top-left {
+                flex-direction: column; /* 模式按鈕垂直排列 */
+                gap: 8px;
+                top: 15px; left: 15px;
+            }
+            
+            #hud-top-right {
+                padding: 8px;
+                gap: 8px;
+                top: 15px; right: 15px;
+            }
+            .chk-label { font-size: 0.8rem; }
+
+            #hud-bottom {
+                width: 85%; /* 手機上滑桿寬一點 */
+                bottom: 25px;
+                padding: 10px 15px;
+            }
+            
+            #slider-label { display: none; } /* 手機上隱藏文字標籤，省空間 */
+
+            #hud-bottom-left {
+                bottom: auto; /* 取消底部定位 */
+                top: 120px; /* 改為上方顯示，避開鍵盤或手 */
+                left: 15px;
+                width: 200px;
+            }
+            .description {
+                font-size: 0.8rem;
+                padding: 10px;
+            }
+
+            .zoom-btn {
+                width: 44px; height: 44px; font-size: 1.5rem;
+            }
+        }
+    </style>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+    
+    <!-- 1. 左上：模式切換 -->
+    <div id="hud-top-left">
+        <div class="mode-btn active" data-mode="growth">模式一：外部增生</div>
+        <div class="mode-btn" data-mode="unfold">模式二：展開重組</div>
+    </div>
+
+    <!-- 2. 右上：顯示選項 -->
+    <div id="hud-top-right">
+        <label class="chk-label"><input type="checkbox" id="chk-wireframe" checked> 參考框線</label>
+        <label class="chk-label"><input type="checkbox" id="chk-edges" checked> 幾何邊框</label>
+        <label class="chk-label"><input type="checkbox" id="chk-centerlines" checked> 中心放射線</label>
+    </div>
+
+    <!-- 3. 下方：進度滑桿 -->
+    <div id="hud-bottom">
+        <span id="slider-label">變換進度</span>
+        <input type="range" id="slider-progress" min="0" max="100" value="0">
+        <span id="progress-val">0%</span>
+    </div>
+
+    <!-- 4. 左下：說明文字 -->
+    <div id="hud-bottom-left">
+        <div id="desc-growth" class="description">
+            <span class="highlight">模式一：外部增生</span><br>
+            從正方體表面長出角錐。<br>
+            0%：顯示中心放射線，暗示生長方向。<br>
+            100%：角錐填滿空間，形成菱形十二面體。
+        </div>
+        <div id="desc-unfold" class="description" style="display:none;">
+            <span class="highlight">模式二：展開重組</span><br>
+            模擬從內部切割後的翻轉過程：<br>
+            0%：<span class="highlight">正方體</span> (角錐向內閉合)<br>
+            50%：<span class="highlight">平面展開</span> (十字形)<br>
+            100%：<span class="highlight">反向摺疊</span> (角錐向外)
+        </div>
+    </div>
+
+    <!-- 5. 右下：縮放按鈕 -->
+    <div id="hud-bottom-right">
+        <div class="zoom-btn" id="btn-zoom-in" title="放大">+</div>
+        <div class="zoom-btn" id="btn-zoom-out" title="縮小">-</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls;
+        let rootGroup, growthGroup, unfoldGroup;
+        let gPyramids = [], gWireframe, centerLines;
+        let uHinges = []; 
+        
+        const cubeSize = 4;
+        const pyramidHeight = cubeSize / 2; 
+        
+        let currentMode = 'growth'; 
+        let currentProgress = 0;
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x222222);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(10, 8, 12);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制像素比以優化手機效能
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 1.0;
+            // 觸控優化
+            controls.rotateSpeed = 0.7;
+            controls.enablePan = false; // 手機上關閉平移比較好操作旋轉
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            backLight.position.set(-5, -5, -5);
+            scene.add(backLight);
+
+            rootGroup = new THREE.Group();
+            scene.add(rootGroup);
+
+            growthGroup = new THREE.Group();
+            rootGroup.add(growthGroup);
+
+            unfoldGroup = new THREE.Group();
+            rootGroup.add(unfoldGroup);
+            unfoldGroup.visible = false;
+
+            createGrowthObjects();
+            createUnfoldObjects();
+
+            window.addEventListener('resize', onWindowResize);
+            
+            // --- UI Event Listeners ---
+            
+            // 1. Slider
+            const slider = document.getElementById('slider-progress');
+            slider.addEventListener('input', (e) => {
+                currentProgress = parseInt(e.target.value) / 100;
+                document.getElementById('progress-val').innerText = e.target.value + '%';
+                updateScene();
+                controls.autoRotate = false;
+            });
+
+            // 2. Mode Buttons
+            const modeBtns = document.querySelectorAll('.mode-btn');
+            modeBtns.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    modeBtns.forEach(b => b.classList.remove('active'));
+                    e.target.classList.add('active');
+                    
+                    currentMode = e.target.getAttribute('data-mode');
+                    growthGroup.visible = currentMode === 'growth';
+                    unfoldGroup.visible = currentMode === 'unfold';
+                    
+                    document.getElementById('desc-growth').style.display = currentMode === 'growth' ? 'block' : 'none';
+                    document.getElementById('desc-unfold').style.display = currentMode === 'unfold' ? 'block' : 'none';
+                    updateScene();
+                });
+            });
+
+            // 3. Checkboxes
+            document.getElementById('chk-wireframe').addEventListener('change', (e) => {
+                if(gWireframe) gWireframe.visible = e.target.checked;
+                unfoldGroup.traverse(child => {
+                   if (child.isLine && child.name === 'uWire') child.visible = e.target.checked;
+                });
+            });
+
+            document.getElementById('chk-edges').addEventListener('change', (e) => {
+                gPyramids.forEach(p => p.children[0].visible = e.target.checked);
+                unfoldGroup.traverse(child => {
+                    if (child.isLine && child.name === 'pyrEdge') child.visible = e.target.checked;
+                });
+            });
+
+            document.getElementById('chk-centerlines').addEventListener('change', (e) => {
+                if(centerLines) centerLines.visible = e.target.checked;
+            });
+
+            // 4. Zoom Buttons (Click & Touch support)
+            const zoomIn = document.getElementById('btn-zoom-in');
+            const zoomOut = document.getElementById('btn-zoom-out');
+
+            const handleZoom = (factor) => {
+                zoomCamera(factor);
+            };
+
+            zoomIn.addEventListener('click', () => handleZoom(0.8));
+            zoomOut.addEventListener('click', () => handleZoom(1.2));
+            
+            // 避免手機上快速點擊被當成雙擊縮放
+            zoomIn.addEventListener('touchstart', (e) => { e.preventDefault(); handleZoom(0.8); });
+            zoomOut.addEventListener('touchstart', (e) => { e.preventDefault(); handleZoom(1.2); });
+        }
+
+        function zoomCamera(factor) {
+            const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
+            const newPos = offset.multiplyScalar(factor).add(controls.target);
+            camera.position.copy(newPos);
+            controls.update(); 
+        }
+
+        function createGrowthObjects() {
+            // 1. Reference Cube Wireframe
+            const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+            const edgesGeo = new THREE.EdgesGeometry(geometry);
+            const material = new THREE.LineBasicMaterial({ color: 0x00aaff, linewidth: 2 });
+            gWireframe = new THREE.LineSegments(edgesGeo, material);
+            growthGroup.add(gWireframe);
+
+            // 2. Center-to-Vertex Lines
+            const vertices = [
+                new THREE.Vector3(cubeSize/2, cubeSize/2, cubeSize/2),
+                new THREE.Vector3(cubeSize/2, cubeSize/2, -cubeSize/2),
+                new THREE.Vector3(cubeSize/2, -cubeSize/2, cubeSize/2),
+                new THREE.Vector3(cubeSize/2, -cubeSize/2, -cubeSize/2),
+                new THREE.Vector3(-cubeSize/2, cubeSize/2, cubeSize/2),
+                new THREE.Vector3(-cubeSize/2, cubeSize/2, -cubeSize/2),
+                new THREE.Vector3(-cubeSize/2, -cubeSize/2, cubeSize/2),
+                new THREE.Vector3(-cubeSize/2, -cubeSize/2, -cubeSize/2)
+            ];
+            
+            const lineGeo = new THREE.BufferGeometry().setFromPoints(
+                vertices.flatMap(v => [new THREE.Vector3(0,0,0), v])
+            );
+            const lineMat = new THREE.LineDashedMaterial({ color: 0xffff00, dashSize: 0.2, gapSize: 0.1 });
+            centerLines = new THREE.LineSegments(lineGeo, lineMat);
+            centerLines.computeLineDistances(); 
+            growthGroup.add(centerLines);
+
+            // 3. Pyramids (Multi-colored)
+            const pyGeometry = new THREE.ConeGeometry(cubeSize * Math.sqrt(2) / 2, pyramidHeight, 4, 1, true); 
+            pyGeometry.translate(0, pyramidHeight / 2, 0);
+            pyGeometry.rotateY(Math.PI / 4);
+
+            const colors = [0xff4444, 0x44ff44, 0x4444ff, 0xffff44, 0x00ffff, 0xff00ff];
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
+
+            const transforms = [
+                { pos: [0, cubeSize/2, 0], rot: [0, 0, 0] },
+                { pos: [0, -cubeSize/2, 0], rot: [Math.PI, 0, 0] },
+                { pos: [cubeSize/2, 0, 0], rot: [0, 0, -Math.PI/2] },
+                { pos: [-cubeSize/2, 0, 0], rot: [0, 0, Math.PI/2] },
+                { pos: [0, 0, cubeSize/2], rot: [Math.PI/2, 0, 0] },
+                { pos: [0, 0, -cubeSize/2], rot: [-Math.PI/2, 0, 0] }
+            ];
+
+            transforms.forEach((t, idx) => {
+                const pyMaterial = new THREE.MeshPhongMaterial({ 
+                    color: colors[idx], 
+                    transparent: true, 
+                    opacity: 0.0, 
+                    side: THREE.DoubleSide, 
+                    flatShading: true 
+                });
+
+                const pyramid = new THREE.Mesh(pyGeometry, pyMaterial);
+                pyramid.position.set(...t.pos);
+                pyramid.rotation.set(...t.rot);
+                
+                const edgeGeo = new THREE.EdgesGeometry(pyGeometry);
+                const edge = new THREE.LineSegments(edgeGeo, edgeMaterial);
+                edge.name = 'pyrEdge';
+                pyramid.add(edge);
+                
+                growthGroup.add(pyramid);
+                gPyramids.push(pyramid);
+            });
+        }
+
+        function createUnfoldObjects() {
+            const colors = [0xff4444, 0x44ff44, 0x4444ff, 0xffff44, 0x00ffff, 0xff00ff];
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
+            const wireMaterial = new THREE.LineBasicMaterial({ color: 0x00aaff, linewidth: 1 });
+            const faceBaseMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false });
+
+            // FIX for Z-Fighting
+            const scaleF = 0.995;
+            const pyGeometry = new THREE.ConeGeometry((cubeSize * Math.sqrt(2) / 2) * scaleF, pyramidHeight * scaleF, 4, 1, true);
+            pyGeometry.translate(0, pyramidHeight / 2, 0); 
+            pyGeometry.rotateY(Math.PI / 4);
+
+            function createFace(colorHex) {
+                const group = new THREE.Group();
+                
+                const faceGeo = new THREE.PlaneGeometry(cubeSize, cubeSize);
+                faceGeo.rotateX(-Math.PI / 2); 
+                const faceMesh = new THREE.Mesh(faceGeo, faceBaseMat);
+                group.add(faceMesh);
+
+                const wGeo = new THREE.EdgesGeometry(faceGeo);
+                const wLines = new THREE.LineSegments(wGeo, wireMaterial);
+                wLines.name = 'uWire';
+                group.add(wLines);
+
+                const pyMat = new THREE.MeshPhongMaterial({ color: colorHex, transparent: true, opacity: 0.9, side: THREE.DoubleSide, flatShading: true });
+                const pyramid = new THREE.Mesh(pyGeometry, pyMat);
+                group.add(pyramid);
+
+                const pEdgeGeo = new THREE.EdgesGeometry(pyGeometry);
+                const pEdge = new THREE.LineSegments(pEdgeGeo, edgeMaterial);
+                pEdge.name = 'pyrEdge';
+                pyramid.add(pEdge);
+
+                return group;
+            }
+
+            const centerFace = createFace(colors[0]);
+            unfoldGroup.add(centerFace);
+
+            function addHingedFace(parent, dir, color) {
+                const pivot = new THREE.Group();
+                let facePosOffset = new THREE.Vector3();
+                const dist = cubeSize / 2;
+                
+                if (dir === 'z-') { // North
+                    pivot.position.set(0, 0, -dist);
+                    facePosOffset.set(0, 0, -dist); 
+                } else if (dir === 'z+') { // South
+                    pivot.position.set(0, 0, dist);
+                    facePosOffset.set(0, 0, dist);
+                } else if (dir === 'x+') { // East
+                    pivot.position.set(dist, 0, 0);
+                    facePosOffset.set(dist, 0, 0);
+                } else if (dir === 'x-') { // West
+                    pivot.position.set(-dist, 0, 0);
+                    facePosOffset.set(-dist, 0, 0);
+                }
+
+                parent.add(pivot);
+                
+                const face = createFace(color);
+                face.position.copy(facePosOffset);
+                pivot.add(face);
+
+                uHinges.push({ pivot: pivot, dir: dir });
+                
+                return face;
+            }
+
+            const northFace = addHingedFace(centerFace, 'z-', colors[1]); // Back
+            addHingedFace(centerFace, 'z+', colors[2]); // Front
+            addHingedFace(centerFace, 'x+', colors[3]); // Right
+            addHingedFace(centerFace, 'x-', colors[4]); // Left
+            addHingedFace(northFace, 'z-', colors[5]); // Top
+        }
+
+        function updateScene() {
+            if (currentMode === 'growth') {
+                gPyramids.forEach(p => {
+                    p.scale.y = currentProgress;
+                    p.visible = true; 
+                    
+                    const targetOpacity = 0.9;
+                    if(p.material) {
+                        p.material.opacity = currentProgress * targetOpacity;
+                    }
+                });
+            } else {
+                let angleDeg = 0;
+                if (currentProgress <= 0.5) {
+                    const t = currentProgress / 0.5;
+                    angleDeg = 90 * (1 - t);
+                } else {
+                    const t = (currentProgress - 0.5) / 0.5;
+                    angleDeg = -90 * t;
+                }
+                
+                const rad = THREE.MathUtils.degToRad(angleDeg);
+
+                uHinges.forEach(h => {
+                    h.pivot.rotation.set(0, 0, 0);
+
+                    if (h.dir === 'z-') h.pivot.rotation.x = rad;   
+                    if (h.dir === 'z+') h.pivot.rotation.x = -rad;  
+                    if (h.dir === 'x+') h.pivot.rotation.z = rad; 
+                    if (h.dir === 'x-') h.pivot.rotation.z = -rad;
+                });
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
