@@ -731,6 +731,7 @@
       if (gameState === 'login') {
         return (
           <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans text-slate-800">
+            <a href="./" className="mb-4 text-sm font-semibold text-slate-500 hover:text-indigo-600">← 回作品集</a>
             <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center border-b-8 border-indigo-100">
                <div className="flex justify-center mb-6">
                  <div className="bg-indigo-100 p-4 rounded-full">
@@ -764,6 +765,7 @@
       if (gameState === 'menu' || gameState === 'leaderboard') {
         return (
           <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans text-slate-800">
+            <a href="./" className="mb-4 text-sm font-semibold text-slate-500 hover:text-indigo-600">← 回作品集</a>
             <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl max-w-md w-full text-center border-b-8 border-indigo-100 relative">
               
               <button onClick={() => setGameState('login')} className="absolute top-4 right-4 text-xs bg-slate-100 px-2 py-1 rounded text-slate-500">
