@@ -1,31 +1,234 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動式數學與幾何模擬作品集</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; line-height: 1.6; padding: 2rem; max-width: 800px; margin: 0 auto; }
-        h1 { color: #003366; border-bottom: 2px solid #003366; padding-bottom: 0.5rem; }
-        ul { list-style-type: none; padding: 0; }
-        li { background: #fff; margin-bottom: 10px; padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: transform 0.2s; }
-        li:hover { transform: translateY(-3px); }
-        a { text-decoration: none; color: #005bb5; font-weight: bold; display: block; }
-        p { margin: 5px 0 0 0; font-size: 0.9em; color: #666; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>數學動態探究室｜張仲緯</title>
+  <meta name="description" content="國中數學互動網頁作品集：因式分解、費馬點、蒙提霍爾、螺旋座標等可直接操作的數學探究。">
+  <style>
+    :root {
+      --bg: #f6f5f1;
+      --surface: #ffffff;
+      --text: #1f2328;
+      --muted: #5c636e;
+      --line: #e3e1da;
+      --algebra: #3b5bdb;
+      --geometry: #0c8a6b;
+      --prob: #c2410c;
+      --apply: #8a3ffc;
+      --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.05);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181c;
+        --surface: #1f2228;
+        --text: #e8e9eb;
+        --muted: #a0a6b0;
+        --line: #2e323a;
+        --algebra: #7b93ff;
+        --geometry: #3ccf9f;
+        --prob: #ff8a4c;
+        --apply: #b48cff;
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+
+    /* ---------- 頁首 ---------- */
+    header { padding: 56px 0 28px; }
+    .eyebrow {
+      font-size: .8rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--muted); margin: 0 0 8px;
+    }
+    h1 { font-size: clamp(1.9rem, 4.5vw, 2.7rem); line-height: 1.2; margin: 0 0 14px; letter-spacing: .02em; }
+    .lead { color: var(--muted); max-width: 40em; margin: 0; font-size: 1.02rem; }
+    .meta { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: .9rem; color: var(--muted); }
+
+    /* ---------- 分類導覽 ---------- */
+    .jump {
+      position: sticky; top: 0; z-index: 5;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--line);
+    }
+    .jump .wrap { display: flex; gap: 6px; overflow-x: auto; padding-top: 10px; padding-bottom: 10px; scrollbar-width: none; }
+    .jump .wrap::-webkit-scrollbar { display: none; }
+    .jump a {
+      flex: none; text-decoration: none; color: var(--text);
+      font-size: .9rem; padding: 6px 14px; border-radius: 999px;
+      border: 1px solid var(--line); background: var(--surface);
+    }
+    .jump a:hover { border-color: currentColor; }
+
+    /* ---------- 分類區塊 ---------- */
+    section { padding: 36px 0 8px; scroll-margin-top: 60px; }
+    .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+    .sec-head h2 { font-size: 1.25rem; margin: 0; }
+    .sec-head .count { font-size: .85rem; color: var(--muted); }
+    .sec-head::before {
+      content: ""; width: 10px; height: 10px; border-radius: 3px;
+      background: var(--accent); align-self: center;
+    }
+    #algebra { --accent: var(--algebra); }
+    #geometry { --accent: var(--geometry); }
+    #probability { --accent: var(--prob); }
+    #applied { --accent: var(--apply); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
+
+    .card {
+      display: flex; flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--accent);
+      border-radius: 12px;
+      padding: 18px 18px 16px;
+      text-decoration: none; color: inherit;
+      box-shadow: var(--shadow);
+      transition: transform .15s ease, border-color .15s ease;
+    }
+    .card:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .card h3 { font-size: 1.08rem; margin: 0 0 2px; }
+    .card .en { font-size: .78rem; color: var(--muted); margin: 0 0 10px; letter-spacing: .02em; }
+    .card p.desc { margin: 0 0 14px; font-size: .94rem; color: var(--text); opacity: .88; flex: 1; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag {
+      font-size: .76rem; padding: 2px 9px; border-radius: 999px;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    .go { margin-top: 14px; font-size: .88rem; font-weight: 600; color: var(--accent); }
+
+    footer { padding: 48px 0 40px; color: var(--muted); font-size: .85rem; }
+    footer .wrap { border-top: 1px solid var(--line); padding-top: 20px; }
+
+    @media (max-width: 480px) {
+      header { padding-top: 36px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
-    <h1>Interactive Math & Geometry Simulations</h1>
-    <p>由張仲緯開發的網頁前端互動實作，運用 HTML5 Canvas 與 JavaScript 將數學理論視覺化。</p>
-    <ul>
-        <li><a href="factorization.html">因數分解遊戲 (Factorization)</a><p>因數分解互動展示與邏輯實作。</p></li>
-        <li><a href="fermat-point.html">費馬點動態模擬 (Fermat Point)</a><p>最佳化距離的幾何視覺化呈現。</p></li>
-        <li><a href="monty.html">蒙提霍爾問題模擬 (Monty Hall)</a><p>經典機率問題的動態驗證。</p></li>
-        <li><a href="motion-simulator.html">物理運動模擬器 (Motion Simulator)</a><p>結合物理公式與網頁繪圖引擎的運動模擬。</p></li>
-        <li><a href="Rhombic dodecahedron.html">菱形十二面體 (Rhombic Dodecahedron)</a><p>空間幾何的多面體繪製。</p></li>
-        <li><a href="infinite square root convergence.html">無限根號收斂 (Infinite Square Root)</a><p>微積分與極限概念的數值收斂展示。</p></li>
-        <li><a href="catapult.html">投石機模擬 (Catapult)</a><p>拋物線與受力分析的動態互動。</p></li>
-        <li><a href="spiral-robot.html">螺旋機器人 (Spiral Robot)</a><p>極座標系下的軌跡繪圖演算法。</p></li>
-    </ul>
+
+  <header>
+    <div class="wrap">
+      <p class="eyebrow">Interactive Math Explorations</p>
+      <h1>數學動態探究室</h1>
+      <p class="lead">動手拖一拖、改一改數字，看看數學規律怎麼長出來。每個作品都能直接在瀏覽器裡操作，建議用電腦或平板開啟。</p>
+      <div class="meta">
+        <span>張仲緯 設計・製作</span>
+        <span>8 個互動作品</span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="jump" aria-label="作品分類">
+    <div class="wrap">
+      <a href="#algebra">數與代數</a>
+      <a href="#geometry">幾何與空間</a>
+      <a href="#probability">機率</a>
+      <a href="#applied">應用與模擬</a>
+    </div>
+  </nav>
+
+  <main class="wrap">
+
+    <section id="algebra">
+      <div class="sec-head"><h2>數與代數</h2><span class="count">3 個作品</span></div>
+      <div class="grid">
+        <a class="card" href="factorization.html">
+          <h3>因式分解大師</h3>
+          <p class="en">Factorization Challenge</p>
+          <p class="desc">用十字交乘把 ax² + bx + c 拆成兩個一次式。有單題練習、限時衝刺、生存挑戰三種模式，難度分三級。</p>
+          <div class="tags"><span class="tag">十字交乘</span><span class="tag">遊戲</span></div>
+          <span class="go">開始挑戰 →</span>
+        </a>
+        <a class="card" href="spiral-robot.html">
+          <h3>螺旋機器人</h3>
+          <p class="en">Spiral Coordinates</p>
+          <p class="desc">機器人從原點繞著方形螺旋往外走。輸入 n 看它停在哪個座標，或反過來給座標找出 n；四個轉角藏著平方數的規律。</p>
+          <div class="tags"><span class="tag">坐標平面</span><span class="tag">數列規律</span></div>
+          <span class="go">開始探索 →</span>
+        </a>
+        <a class="card" href="infinite-sqrt.html">
+          <h3>無窮根號會停在哪？</h3>
+          <p class="en">Infinite Nested Radical</p>
+          <p class="desc">√(k + √(k + √(k + …))) 最後等於多少？一步步畫出蛛網圖，看數值怎麼逼近曲線與 y = x 的交點。</p>
+          <div class="tags"><span class="tag">迭代</span><span class="tag">一元二次方程式</span><span class="tag">延伸</span></div>
+          <span class="go">開始探索 →</span>
+        </a>
+      </div>
+    </section>
+
+    <section id="geometry">
+      <div class="sec-head"><h2>幾何與空間</h2><span class="count">2 個作品</span></div>
+      <div class="grid">
+        <a class="card" href="fermat-point.html">
+          <h3>費馬點：從實驗到證明</h3>
+          <p class="en">Fermat Point</p>
+          <p class="desc">三角形內哪一點到三個頂點的距離和最小？先拖曳 P 點收集數據，再用「旋轉 60°」完成證明，最後看看某個角超過 120° 時會發生什麼。</p>
+          <div class="tags"><span class="tag">旋轉</span><span class="tag">最短路徑</span><span class="tag">證明</span></div>
+          <span class="go">開始探索 →</span>
+        </a>
+        <a class="card" href="rhombic-dodecahedron.html">
+          <h3>正方體變身菱形十二面體</h3>
+          <p class="en">Rhombic Dodecahedron</p>
+          <p class="desc">在正方體的六個面上各長出一個四角錐，就拼成菱形十二面體。可以旋轉 3D 模型，也能看展開、再反向摺回的過程。</p>
+          <div class="tags"><span class="tag">立體圖形</span><span class="tag">3D</span></div>
+          <span class="go">開始探索 →</span>
+        </a>
+      </div>
+    </section>
+
+    <section id="probability">
+      <div class="sec-head"><h2>機率</h2><span class="count">1 個作品</span></div>
+      <div class="grid">
+        <a class="card" href="monty.html">
+          <h3>換門還是不換？蒙提霍爾問題</h3>
+          <p class="en">Monty Hall Problem</p>
+          <p class="desc">主持人打開一扇山羊門後，你要不要換？先自己玩幾局，再一口氣模擬上萬次，看實驗結果和理論機率對不對得上。門的數量也可以自己改。</p>
+          <div class="tags"><span class="tag">機率</span><span class="tag">大數法則</span><span class="tag">模擬</span></div>
+          <span class="go">開始實驗 →</span>
+        </a>
+      </div>
+    </section>
+
+    <section id="applied">
+      <div class="sec-head"><h2>應用與模擬</h2><span class="count">2 個作品</span></div>
+      <div class="grid">
+        <a class="card" href="motion-simulator.html">
+          <h3>動態行程問題</h3>
+          <p class="en">Meeting &amp; Chasing Problems</p>
+          <p class="desc">兩人相向而行什麼時候相遇？圓形跑道上追上再折返要多久？用動畫和時間軸對照你的算式。</p>
+          <div class="tags"><span class="tag">行程問題</span><span class="tag">速率</span></div>
+          <span class="go">開始觀察 →</span>
+        </a>
+        <a class="card" href="catapult.html">
+          <h3>投石器實驗室</h3>
+          <p class="en">Catapult Lab</p>
+          <p class="desc">改變發射角度、彈力和質量，記錄每次的飛行距離。練習一次只改一個變因，再把數據畫成折線圖。</p>
+          <div class="tags"><span class="tag">控制變因</span><span class="tag">數據</span><span class="tag">拋物線</span></div>
+          <span class="go">開始實驗 →</span>
+        </a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="wrap">張仲緯 設計・製作｜所有作品皆以 HTML / JavaScript 開發，於瀏覽器中直接執行。</div>
+  </footer>
+
 </body>
 </html>
