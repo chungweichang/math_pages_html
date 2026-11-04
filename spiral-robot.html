@@ -19,18 +19,18 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef, useCallback } = React;
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
     // ==========================================
-    // 螺旋座標的數學
+    // 標準螺旋（起點 1、第一步向右、逆時針）
+    //   m = 第幾個格子（從 1 開始）
     // ==========================================
-    // 第 n 步的座標
-    const getCoords = (n) => {
-      if (n === 1) return { x: 0, y: 0 };
-      const k = Math.ceil((Math.sqrt(n) - 1) / 2);
+    const canonCoords = (m) => {
+      if (m <= 1) return { x: 0, y: 0 };
+      const k = Math.ceil((Math.sqrt(m) - 1) / 2);
       const prevSquare = (2 * k - 1) ** 2;
       const side = 2 * k;
-      let pos = n - prevSquare;
+      let pos = m - prevSquare;
       if (pos <= side) return { x: k, y: -(k - 1) + (pos - 1) };
       pos -= side;
       if (pos <= side) return { x: k - pos, y: k };
@@ -41,8 +41,7 @@
       return { x: k, y: -k };
     };
 
-    // 座標 (x, y) 是第幾步
-    const getN = (x, y) => {
+    const canonM = (x, y) => {
       const k = Math.max(Math.abs(x), Math.abs(y));
       if (k === 0) return 1;
       const prevSquare = (2 * k - 1) ** 2;
@@ -54,31 +53,98 @@
       return (2 * k + 1) ** 2;
     };
 
-    // 路徑只在轉角轉彎，所以只要畫轉角就好（第 k 圈的 5 個轉折）
-    const cornersUpTo = (n) => {
-      const list = [1];
-      for (let k = 1; ; k++) {
-        const cs = [(2*k-1)**2 + 1, 4*k*k - 2*k + 1, 4*k*k + 1, 4*k*k + 2*k + 1, (2*k+1)**2];
-        for (const c of cs) { if (c > n) return list; list.push(c); }
-      }
+    // 標準螺旋中，第 k 圈的四個轉角（依行走順序）：
+    // 第 k 圈從 (2k−1)² 之後開始，每走 2k 步遇到一個轉角，所以第 j 個轉角是 4k² + (2j − 4)k + 1
+    const CANON_CORNERS = [
+      { sides: 1, sx: 1,  sy: 1  },
+      { sides: 2, sx: -1, sy: 1  },
+      { sides: 3, sx: -1, sy: -1 },
+      { sides: 4, sx: 1,  sy: -1 },
+    ];
+
+    // 畫面上的四個象限
+    const QUADS = {
+      TR: { sx: 1,  sy: 1,  label: '↗ 右上', name: '右上', quad: '第一象限' },
+      TL: { sx: -1, sy: 1,  label: '↖ 左上', name: '左上', quad: '第二象限' },
+      BL: { sx: -1, sy: -1, label: '↙ 左下', name: '左下', quad: '第三象限' },
+      BR: { sx: 1,  sy: -1, label: '↘ 右下', name: '右下', quad: '第四象限' },
+    };
+    const QUAD_ORDER = ['TL', 'TR', 'BL', 'BR'];
+    const quadOf = (sx, sy) => Object.keys(QUADS).find((q) => QUADS[q].sx === sx && QUADS[q].sy === sy);
+
+    const DIRS = ['右', '上', '左', '下'];
+
+    // 4k² + bk + c 寫成好讀的字串
+    const polyStr = (b, c) => {
+      let s = '4k²';
+      if (b) s += b > 0 ? ` + ${b === 1 ? '' : b}k` : ` − ${b === -1 ? '' : -b}k`;
+      if (c) s += c > 0 ? ` + ${c}` : ` − ${-c}`;
+      return s;
     };
 
-    const PATTERNS = {
-      topRight:    { label: '↗ 右上', quad: '第一象限', sides: 1, formula: '4k² − 2k + 1', at: (k) => ({ n: 4*k*k - 2*k + 1, x: k,  y: k  }) },
-      topLeft:     { label: '↖ 左上', quad: '第二象限', sides: 2, formula: '4k² + 1',    at: (k) => ({ n: 4*k*k + 1,         x: -k, y: k  }) },
-      bottomLeft:  { label: '↙ 左下', quad: '第三象限', sides: 3, formula: '4k² + 2k + 1', at: (k) => ({ n: 4*k*k + 2*k + 1,   x: -k, y: -k }) },
-      bottomRight: { label: '↘ 右下', quad: '第四象限', sides: 4, formula: '(2k + 1)²',    at: (k) => ({ n: (2*k+1)**2,        x: k,  y: -k }) },
+    // ==========================================
+    // 規則：起點（1 或 0）、方向（逆時針 / 順時針）、第一步方向（右上左下）
+    //   畫面座標 = 旋轉 first×90°（鏡射後）的標準座標；編號 n = m + start − 1
+    // ==========================================
+    const makeSpiral = ({ start, cw, first }) => {
+      const rot = (p, times) => {
+        let { x, y } = p;
+        for (let i = 0; i < ((times % 4) + 4) % 4; i++) [x, y] = [-y, x];
+        return { x, y };
+      };
+      const T = (p) => rot(cw ? { x: p.x, y: -p.y } : p, first);
+      const Tinv = (p) => { const q = rot(p, -first); return cw ? { x: q.x, y: -q.y } : q; };
+      const toM = (n) => n - start + 1;
+      const toN = (m) => m + start - 1;
+
+      // 四個畫面象限各自對應的轉角
+      const corners = {};
+      CANON_CORNERS.forEach((c) => {
+        const s = T({ x: c.sx, y: c.sy });
+        const b = 2 * c.sides - 4;
+        corners[quadOf(s.x, s.y)] = {
+          sides: c.sides, b, c: start,
+          formula: polyStr(b, start),
+          at: (k) => ({ n: 4 * k * k + b * k + start, x: s.x * k, y: s.y * k }),
+        };
+      });
+      const ringEndQuad = Object.keys(corners).find((q) => corners[q].sides === 4);
+      const ringOrder = Object.keys(corners).sort((a, b) => corners[a].sides - corners[b].sides);
+
+      return {
+        start, cw, first, corners, ringEndQuad, ringOrder,
+        coords: (n) => T(canonCoords(toM(n))),
+        nAt: (x, y) => toN(canonM(...Object.values(Tinv({ x, y })))),
+        // 路徑只在轉角轉彎，只要畫到轉角就好
+        cornerNsUpTo: (n) => {
+          const m = toM(n), list = [toN(1)];
+          for (let k = 1; ; k++) {
+            const cs = [(2*k-1)**2 + 1, 4*k*k - 2*k + 1, 4*k*k + 1, 4*k*k + 2*k + 1, (2*k+1)**2];
+            for (const c of cs) { if (c > m) return list; list.push(toN(c)); }
+          }
+        },
+        ringEnd: (k) => (2 * k + 1) ** 2 + start - 1,
+      };
     };
-    const PATTERN_ORDER = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'];
 
     const MAX_N = 1000000;
-    const clampN = (v) => Math.max(1, Math.min(MAX_N, v));
-    const fmtNum = (n) => n.toLocaleString('en-US');
 
     // ==========================================
-    // 一般式探究：學生輸入 n 用 k 表示的式子，自動檢查
+    // 質數表（篩法）
     // ==========================================
-    // 只接受數字、k、+ − × ÷ ^ 括號；支援 4k^2、2(k+1)²、(2k+1)^2 這類寫法
+    const PRIME_K = 400;                        // 質數模式畫到第 400 圈
+    const PRIME_LIMIT = (2 * PRIME_K + 1) ** 2;  // 641,601
+    const SIEVE = (() => {
+      const s = new Uint8Array(PRIME_LIMIT + 2).fill(1);
+      s[0] = s[1] = 0;
+      for (let i = 2; i * i <= PRIME_LIMIT; i++) if (s[i]) for (let j = i * i; j <= PRIME_LIMIT; j += i) s[j] = 0;
+      return s;
+    })();
+    const isPrime = (n) => n >= 2 && n <= PRIME_LIMIT && SIEVE[n] === 1;
+
+    // ==========================================
+    // 式子解析：只接受數字、k、+ − × ÷ ^ 括號；支援 4k^2、2(k+1)²、(2k+1)^2
+    // ==========================================
     const compileFormula = (src) => {
       let t = src.replace(/\s+/g, '').replace(/^n=/i, '').replace(/K/g, 'k')
         .replace(/[×·]/g, '*').replace(/÷/g, '/').replace(/[−–]/g, '-').replace(/²/g, '^2').replace(/³/g, '^3');
@@ -93,19 +159,34 @@
       } catch (e) { return null; }
     };
 
-    const FormulaLab = ({ pkey }) => {
+    const Hint = ({ color = 'amber', title, children }) => {
+      const c = {
+        amber: 'bg-amber-50 border-amber-200 text-amber-800',
+        sky: 'bg-sky-50 border-sky-200 text-sky-800',
+        violet: 'bg-violet-50 border-violet-200 text-violet-800',
+      }[color];
+      return (
+        <div className={`rounded-xl border p-3 text-slate-700 ${c.split(' ').slice(0, 2).join(' ')}`}>
+          <b className={c.split(' ')[2]}>{title}</b>{children}
+        </div>
+      );
+    };
+
+    // ==========================================
+    // ④ 一般式探究
+    // ==========================================
+    const FormulaLab = ({ qkey, spiral }) => {
       const [guess, setGuess] = useState('');
       const [result, setResult] = useState(null);
-      const [hint, setHint] = useState(0); // 0 無提示、1 看差、2 從上一圈出發、3 答案
-      useEffect(() => { setGuess(''); setResult(null); setHint(0); }, [pkey]);
+      const [hint, setHint] = useState(0);
+      useEffect(() => { setGuess(''); setResult(null); setHint(0); }, [qkey, spiral]);
 
-      if (!pkey || pkey === 'none') {
-        return <p className="text-sm text-slate-500">先在 ③ 選一個轉角，這裡會列出它的數據。</p>;
-      }
-      const p = PATTERNS[pkey];
+      if (!qkey) return <p className="text-sm text-slate-500">先在 ③ 選一個轉角，這裡會列出它的數據。</p>;
+      const q = QUADS[qkey], p = spiral.corners[qkey];
       const rows = [1, 2, 3, 4, 5].map((k) => p.at(k));
       const d1 = rows.slice(1).map((r, i) => r.n - rows[i].n);
       const d2 = d1.slice(1).map((v, i) => v - d1[i]);
+      const prevEnd = spiral.start === 1 ? '(2k − 1)²' : '(2k − 1)² − 1';
 
       const check = () => {
         const f = compileFormula(guess);
@@ -125,9 +206,8 @@
       return (
         <div className="space-y-3">
           <p className="text-sm text-slate-600">
-            {p.label}轉角的點落在 ({p.at(1).x > 0 ? 'k' : '−k'}, {p.at(1).y > 0 ? 'k' : '−k'})。它是第幾步？試著用 k 寫出 n 的一般式。
+            {q.label}轉角的點落在 ({q.sx > 0 ? 'k' : '−k'}, {q.sy > 0 ? 'k' : '−k'})。它是第幾步？試著用 k 寫出 n 的一般式。
           </p>
-
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-sm bg-white">
               <thead className="bg-slate-50"><tr>
@@ -162,20 +242,12 @@
           )}
 
           <div className="space-y-2 text-sm">
-            {hint >= 1 && (
-              <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-slate-700">
-                <b className="text-amber-800">提示 1：</b>相鄰兩項的差越來越大，但「差的差」固定不變，代表 n 是 k 的二次式：n = ak² + bk + c。用 k = 1、2、3 列方程式就能解出 a、b、c。
-              </div>
-            )}
-            {hint >= 2 && (
-              <div className="rounded-xl bg-sky-50 border border-sky-200 p-3 text-slate-700">
-                <b className="text-sky-800">提示 2：</b>前一圈走完時停在右下角，編號是 (2k − 1)²。第 k 圈每一個邊要走 2k 步。從那裡走到{p.label}轉角，一共走了幾個邊？
-              </div>
-            )}
+            {hint >= 1 && <Hint title="提示 1：">相鄰兩項的差越來越大，但「差的差」固定不變，代表 n 是 k 的二次式：n = ak² + bk + c。用 k = 1、2、3 列方程式就能解出 a、b、c。</Hint>}
+            {hint >= 2 && <Hint color="sky" title="提示 2：">前一圈走完時停在{QUADS[spiral.ringEndQuad].name}角，編號是 {prevEnd}。第 k 圈每一個邊要走 2k 步。從那裡走到{q.name}轉角，一共走了幾個邊？</Hint>}
             {hint >= 3 && (
               <div className="rounded-xl bg-slate-800 text-white p-3">
                 <b className="text-indigo-300">答案：</b>
-                <span className="font-mono">n = (2k − 1)² + {p.sides} × 2k = {p.formula}</span>
+                <span className="font-mono">n = {prevEnd} + {p.sides} × 2k = {p.formula}</span>
               </div>
             )}
             {hint < 3 && (
@@ -189,31 +261,185 @@
     };
 
     // ==========================================
+    // ⑤ 只用公式定位
+    // ==========================================
+    const randomN = (start) => start + 50 + Math.floor(Math.random() * 9950);
+
+    const LocateChallenge = ({ spiral, onJump }) => {
+      const [n, setN] = useState(2000);
+      const [gx, setGx] = useState('');
+      const [gy, setGy] = useState('');
+      const [result, setResult] = useState(null);
+      const [hint, setHint] = useState(0);
+      const reset = (newN) => { setN(newN); setGx(''); setGy(''); setResult(null); setHint(0); };
+      useEffect(() => { reset(2000); }, [spiral]);
+
+      const ans = spiral.coords(n);
+      // 解題過程：找圈數 → 四個轉角 → 往回數
+      let k = 0;
+      while (spiral.ringEnd(k) < n) k++;
+      const ringCorners = spiral.ringOrder.map((qk) => ({ qk, ...spiral.corners[qk].at(k) }));
+      const firstOfRing = k === 0 ? n : spiral.ringEnd(k - 1) + 1;
+      let solution = null;
+      if (k === 0) solution = `n = ${spiral.start} 就是原點。`;
+      else {
+        const next = ringCorners.find((c) => c.n >= n);
+        const d = next.n - n;
+        solution = `第 ${k} 圈的編號從 ${firstOfRing} 到 ${spiral.ringEnd(k)}。這一圈的轉角依序是 ` +
+          ringCorners.map((c) => `${QUADS[c.qk].name}角 ${c.n}（${c.x}, ${c.y}）`).join('、') +
+          (d === 0 ? `。${n} 剛好就是${QUADS[next.qk].name}角，座標 (${ans.x}, ${ans.y})。` : `。${n} 比${QUADS[next.qk].name}角的 ${next.n} 少 ${d}，所以從 (${next.x}, ${next.y}) 往回數 ${d} 格，得到 (${ans.x}, ${ans.y})。`);
+      }
+
+      const check = () => {
+        const x = parseInt(gx), y = parseInt(gy);
+        if (Number.isNaN(x) || Number.isNaN(y)) { setResult({ ok: false, msg: '請填入 x 和 y 兩個整數。' }); return; }
+        if (x === ans.x && y === ans.y) setResult({ ok: true, msg: `正確！A${n} 在 (${ans.x}, ${ans.y})。` });
+        else {
+          const got = spiral.nAt(x, y);
+          setResult({ ok: false, msg: `(${x}, ${y}) 是第 ${got} 步，比 ${n} ${got > n ? '多' : '少'}了 ${Math.abs(got - n)} 步。` });
+        }
+      };
+
+      const input = 'w-full border border-slate-300 rounded-xl px-3 py-2.5 text-base font-mono focus:ring-2 focus:ring-violet-300 outline-none bg-white';
+      return (
+        <div className="space-y-3 text-sm">
+          <p className="text-slate-600">不要用 ① 讓機器人走過去，只用一般式算出它的座標。</p>
+          <div className="flex items-center justify-between bg-white rounded-xl border border-violet-200 px-4 py-3">
+            <div className="text-slate-500">第 n 步，n =</div>
+            <div className="text-2xl font-black text-violet-700 font-mono">{n}</div>
+            <button onClick={() => reset(randomN(spiral.start))} className="text-xs font-bold text-violet-600 hover:text-violet-800 whitespace-nowrap">🎲 換一題</button>
+          </div>
+          <div className="flex gap-2 items-end">
+            <label className="flex-1 text-xs font-bold text-slate-500">x<input type="number" inputMode="numeric" value={gx} onChange={(e) => { setGx(e.target.value); setResult(null); }} className={input + ' mt-1'} /></label>
+            <label className="flex-1 text-xs font-bold text-slate-500">y<input type="number" inputMode="numeric" value={gy} onChange={(e) => { setGy(e.target.value); setResult(null); }} onKeyDown={(e) => e.key === 'Enter' && check()} className={input + ' mt-1'} /></label>
+            <button onClick={check} className="px-4 py-2.5 rounded-xl font-bold bg-violet-600 text-white hover:bg-violet-700 whitespace-nowrap">檢查</button>
+          </div>
+          {result && (
+            <div className={`rounded-xl px-3 py-2 ${result.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+              {result.ok ? '✓ ' : ''}{result.msg}
+              {result.ok && <button onClick={() => onJump(n)} className="block mt-1 text-xs font-bold text-emerald-700 underline">讓機器人跳過去驗證</button>}
+            </div>
+          )}
+          {hint >= 1 && <Hint color="violet" title="提示 1：先找圈數。">每一圈走完時停在{QUADS[spiral.ringEndQuad].name}角，第 k 圈結束的編號是 {spiral.start === 1 ? '(2k + 1)²' : '(2k + 1)² − 1'}。找出讓它 ≥ {n} 的最小 k，{n} 就在第 k 圈。</Hint>}
+          {hint >= 2 && <Hint color="violet" title="提示 2：再找邊。">用 ④ 的一般式算出第 k 圈四個轉角的編號，看 {n} 落在哪兩個轉角之間。</Hint>}
+          {hint >= 3 && <Hint color="violet" title="提示 3：最後數格子。">從離 {n} 最近的轉角 (±k, ±k) 出發，沿著那一邊數過去。</Hint>}
+          {hint >= 4 && <div className="rounded-xl bg-slate-800 text-white p-3 leading-relaxed"><b className="text-violet-300">解法：</b>{solution}</div>}
+          {hint < 4 && (
+            <button onClick={() => setHint(hint + 1)} className="font-bold text-slate-500 hover:text-violet-600">
+              {['💡 給我提示 1', '💡 給我提示 2', '💡 給我提示 3', '看解法'][hint]}
+            </button>
+          )}
+        </div>
+      );
+    };
+
+    // ==========================================
+    // ⑥ 質數在哪裡？
+    // ==========================================
+    const PrimeLab = ({ spiral, showPrimes, setShowPrimes }) => {
+      const [open, setOpen] = useState(0);
+      const K = 200;
+      const stats = useMemo(() => QUAD_ORDER.map((qk) => {
+        const p = spiral.corners[qk];
+        let count = 0;
+        for (let k = 1; k <= K; k++) if (isPrime(p.at(k).n)) count++;
+        return { qk, formula: p.formula, count };
+      }), [spiral]);
+      const maxC = Math.max(1, ...stats.map((s) => s.count));
+      const questions = [
+        ['哪一條斜線上的質數最多？哪一條一個都沒有？', '對照下面的統計，再回到 ④ 看看那條線的一般式。'],
+        ['為什麼有一條斜線上完全沒有質數？', spiral.start === 1 ? '看看那條線的一般式：它可以寫成某個數的平方。' : '試著把那條線的一般式因式分解。'],
+        ['把 4k² + 1 除以 3，餘數會是多少？試試 k = 1 到 6。它有可能是 3 的倍數嗎？', 'k 除以 3 的餘數只有 0、1、2 三種，k² 除以 3 的餘數呢？同樣的方法試試看除以 7。（起點改成 0 時，換成看 4k² 這條線，結果又會如何？）'],
+      ];
+      return (
+        <div className="space-y-3 text-sm">
+          <label className="flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-4 py-3 cursor-pointer">
+            <input type="checkbox" checked={showPrimes} onChange={(e) => setShowPrimes(e.target.checked)} className="w-5 h-5 accent-amber-500" />
+            <span className="font-bold text-slate-700">把質數標成亮點</span>
+            <span className="text-xs text-slate-400 ml-auto">標到約 64 萬</span>
+          </label>
+          <p className="text-slate-600">打開後縮小畫面，看看質數排成了什麼圖案。</p>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-3">
+            <div className="text-xs font-bold text-slate-500 mb-2">四個轉角的前 {K} 項中，有幾個質數？</div>
+            <div className="space-y-1.5">
+              {stats.map((s) => (
+                <div key={s.qk} className="flex items-center gap-2">
+                  <span className="w-12 text-xs font-bold text-slate-600 whitespace-nowrap">{QUADS[s.qk].name}</span>
+                  <div className="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+                    <div className="h-full bg-amber-400" style={{ width: `${s.count / maxC * 100}%` }} />
+                  </div>
+                  <span className="w-8 text-right font-mono text-xs font-bold">{s.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {questions.map(([q, h], i) => (
+              <div key={i} className="bg-white rounded-xl border border-slate-200">
+                <button onClick={() => setOpen(open === i + 1 ? 0 : i + 1)} className="w-full text-left p-3 flex gap-2">
+                  <b className="text-amber-600">{i + 1}.</b><span className="flex-1 text-slate-700">{q}</span>
+                  <span className="text-slate-400">{open === i + 1 ? '▾' : '▸'}</span>
+                </button>
+                {open === i + 1 && <p className="px-3 pb-3 text-slate-600">提示：{h}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // ==========================================
     // 主程式
     // ==========================================
     const App = () => {
+      const [rules, setRules] = useState({ start: 1, cw: false, first: 0 });
+      const spiral = useMemo(() => makeSpiral(rules), [rules]);
+
       const [targetInput, setTargetInput] = useState('2025');
       const [targetN, setTargetN] = useState(2025);
       const [currentN, setCurrentN] = useState(1);
       const [isPlaying, setIsPlaying] = useState(false);
-      const [speedLevel, setSpeedLevel] = useState(4);       // 0~8，對應每秒步數
-      const [activePattern, setActivePattern] = useState('bottomRight');
+      const [speedLevel, setSpeedLevel] = useState(4);
+      const [activeQuad, setActiveQuad] = useState('BR');
       const [showNumbers, setShowNumbers] = useState(true);
+      const [showPrimes, setShowPrimes] = useState(false);
       const [follow, setFollow] = useState(true);
       const [reverseX, setReverseX] = useState('3');
       const [reverseY, setReverseY] = useState('-2');
-      const [view, setView] = useState({ cx: 0, cy: 0, zoom: 32 }); // 畫面中心的數學座標、每單位幾 px
+      const [view, setView] = useState({ cx: 0, cy: 0, zoom: 32 });
       const [size, setSize] = useState({ w: 600, h: 400 });
 
       const STEPS_PER_SEC = [2, 5, 10, 25, 60, 150, 400, 1200, 4000];
       const stepsPerSec = STEPS_PER_SEC[speedLevel];
+      const minN = rules.start;
+      const clampN = (v) => Math.max(minN, Math.min(MAX_N, v));
 
       const canvasRef = useRef(null);
       const boxRef = useRef(null);
       const viewRef = useRef(view);
       viewRef.current = view;
 
-      // ---------- 畫布尺寸（跟著容器、支援高解析螢幕） ----------
+      // 改規則時，機器人回到起點
+      useEffect(() => { setIsPlaying(false); setCurrentN(rules.start); }, [rules]);
+
+      // 質數的座標（規則改變時重算）
+      const primePts = useMemo(() => {
+        if (!showPrimes) return null;
+        const xs = [], ys = [];
+        for (let n = 2; n <= PRIME_LIMIT; n++) {
+          if (SIEVE[n] && n - rules.start + 1 <= PRIME_LIMIT) { const p = spiral.coords(n); xs.push(p.x); ys.push(p.y); }
+        }
+        return { xs: Int16Array.from(xs), ys: Int16Array.from(ys) };
+      }, [showPrimes, spiral]);
+
+      const togglePrimes = (on) => {
+        setShowPrimes(on);
+        if (on) setView((v) => ({ ...v, cx: 0, cy: 0, zoom: Math.min(v.zoom, 3) }));
+      };
+
+      // ---------- 畫布尺寸 ----------
       useEffect(() => {
         const el = boxRef.current;
         const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
@@ -298,15 +524,12 @@
 
       useEffect(() => { if (isPlaying && currentN === targetN) setIsPlaying(false); }, [currentN, targetN, isPlaying]);
 
-      // 跟隨機器人：機器人快走出畫面時，把它拉回中間
       useEffect(() => {
         if (!follow) return;
-        const p = getCoords(currentN);
+        const p = spiral.coords(currentN);
         const { sx, sy } = toScreen(p.x, p.y, viewRef.current);
         const m = 60;
-        if (sx < m || sx > size.w - m || sy < m || sy > size.h - m) {
-          setView((v) => ({ ...v, cx: p.x, cy: p.y }));
-        }
+        if (sx < m || sx > size.w - m || sy < m || sy > size.h - m) setView((v) => ({ ...v, cx: p.x, cy: p.y }));
       }, [currentN, follow, size]);
 
       // ---------- 繪圖 ----------
@@ -319,36 +542,33 @@
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         const { w, h } = size;
         const { zoom } = view;
-        ctx.clearRect(0, 0, w, h);
-        ctx.fillStyle = '#f8fafc';
+        ctx.fillStyle = showPrimes ? '#0f172a' : '#f8fafc';
         ctx.fillRect(0, 0, w, h);
 
         const left = view.cx - w / 2 / zoom, right = view.cx + w / 2 / zoom;
         const bottom = view.cy - h / 2 / zoom, top = view.cy + h / 2 / zoom;
         const o = toScreen(0, 0);
 
-        // 格線：間距至少約 48px
+        // 格線
         let step = 1;
         for (const m of [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]) { step = m; if (m * zoom >= 48) break; }
-        ctx.strokeStyle = '#e2e8f0';
+        ctx.strokeStyle = showPrimes ? '#1e293b' : '#e2e8f0';
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let x = Math.floor(left / step) * step; x <= right; x += step) { const s = toScreen(x, 0).sx; ctx.moveTo(s, 0); ctx.lineTo(s, h); }
         for (let y = Math.floor(bottom / step) * step; y <= top; y += step) { const s = toScreen(0, y).sy; ctx.moveTo(0, s); ctx.lineTo(w, s); }
         ctx.stroke();
 
-        // 座標軸
-        ctx.strokeStyle = '#94a3b8';
+        ctx.strokeStyle = showPrimes ? '#334155' : '#94a3b8';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(0, o.sy); ctx.lineTo(w, o.sy);
         ctx.moveTo(o.sx, 0); ctx.lineTo(o.sx, h);
         ctx.stroke();
 
-        // 刻度數字（軸跑出畫面時，貼在邊緣）
         ctx.font = '12px sans-serif';
-        ctx.fillStyle = '#64748b';
-        ctx.strokeStyle = 'rgba(248,250,252,0.95)';
+        ctx.fillStyle = showPrimes ? '#94a3b8' : '#64748b';
+        ctx.strokeStyle = showPrimes ? 'rgba(15,23,42,0.9)' : 'rgba(248,250,252,0.95)';
         ctx.lineWidth = 4;
         const label = (t, x, y) => { ctx.strokeText(t, x, y); ctx.fillText(t, x, y); };
         ctx.textAlign = 'center';
@@ -360,29 +580,41 @@
         const axisX = Math.min(Math.max(o.sx - 6, 30), w - 4);
         for (let y = Math.floor(bottom / step) * step; y <= top; y += step) if (y !== 0) label(y, axisX, toScreen(0, y).sy);
 
-        // 走過的路徑（只畫轉角）
-        ctx.strokeStyle = '#6366f1';
+        // 質數亮點
+        if (showPrimes && primePts) {
+          const sz = Math.max(1.6, Math.min(zoom * 0.85, 14));
+          ctx.fillStyle = '#fbbf24';
+          const { xs, ys } = primePts;
+          for (let i = 0; i < xs.length; i++) {
+            const x = xs[i], y = ys[i];
+            if (x < left - 1 || x > right + 1 || y < bottom - 1 || y > top + 1) continue;
+            const s = toScreen(x, y);
+            ctx.fillRect(s.sx - sz / 2, s.sy - sz / 2, sz, sz);
+          }
+        }
+
+        // 走過的路徑
+        ctx.strokeStyle = showPrimes ? 'rgba(129,140,248,0.55)' : '#6366f1';
         ctx.lineWidth = Math.max(1.5, Math.min(4, zoom * 0.1));
         ctx.lineJoin = 'round';
         ctx.beginPath();
-        const corners = cornersUpTo(currentN);
-        corners.forEach((c, i) => { const p = getCoords(c); const s = toScreen(p.x, p.y); i ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
-        const cur = getCoords(currentN);
+        spiral.cornerNsUpTo(currentN).forEach((c, i) => { const p = spiral.coords(c); const s = toScreen(p.x, p.y); i ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
+        const cur = spiral.coords(currentN);
         const cs = toScreen(cur.x, cur.y);
         ctx.lineTo(cs.sx, cs.sy);
         ctx.stroke();
 
-        // 格點編號（放大時才顯示，只標走過的點）
+        // 格點編號
         if (showNumbers && zoom >= 44) {
           ctx.font = `${Math.min(14, Math.round(zoom * 0.3))}px ui-monospace, monospace`;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'bottom';
-          ctx.fillStyle = '#475569';
           for (let x = Math.ceil(left); x <= Math.floor(right); x++) {
             for (let y = Math.ceil(bottom); y <= Math.floor(top); y++) {
-              const n = getN(x, y);
+              const n = spiral.nAt(x, y);
               if (n > currentN) continue;
               const s = toScreen(x, y);
+              ctx.fillStyle = showPrimes ? (isPrime(n) ? '#fbbf24' : '#94a3b8') : '#475569';
               ctx.beginPath(); ctx.arc(s.sx, s.sy, 2.5, 0, Math.PI * 2); ctx.fill();
               ctx.fillText(n, s.sx + 4, s.sy - 2);
             }
@@ -390,10 +622,10 @@
         }
 
         // 轉角規律點
-        if (activePattern !== 'none') {
-          const pat = PATTERNS[activePattern];
+        if (activeQuad) {
+          const pat = spiral.corners[activeQuad];
           const kMax = Math.ceil(Math.max(Math.abs(left), Math.abs(right), Math.abs(top), Math.abs(bottom))) + 1;
-          const r = Math.max(5, Math.min(9, zoom * 0.18));
+          const r = Math.max(showPrimes ? 3 : 5, Math.min(9, zoom * 0.18));
           const labelEvery = Math.max(1, Math.ceil(70 / zoom));
           for (let k = 1; k <= kMax; k++) {
             const pt = pat.at(k);
@@ -406,9 +638,10 @@
               ctx.textBaseline = 'middle';
               ctx.textAlign = 'left';
               ctx.lineWidth = 4;
-              ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+              ctx.strokeStyle = showPrimes ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.9)';
               ctx.font = 'bold 15px sans-serif';
-              ctx.strokeText('A', tx, ty); ctx.fillStyle = '#be123c'; ctx.fillText('A', tx, ty);
+              ctx.fillStyle = showPrimes ? '#fda4af' : '#be123c';
+              ctx.strokeText('A', tx, ty); ctx.fillText('A', tx, ty);
               const aw = ctx.measureText('A').width;
               ctx.font = 'bold 11px sans-serif';
               ctx.strokeText(pt.n, tx + aw + 1, ty + 6); ctx.fillText(pt.n, tx + aw + 1, ty + 6);
@@ -418,7 +651,7 @@
 
         // 機器人
         const rs = Math.max(14, Math.min(28, zoom * 0.6));
-        ctx.fillStyle = '#1e293b';
+        ctx.fillStyle = showPrimes ? '#e2e8f0' : '#1e293b';
         ctx.beginPath();
         ctx.roundRect(cs.sx - rs / 2, cs.sy - rs / 2, rs, rs, 4);
         ctx.fill();
@@ -427,49 +660,52 @@
         ctx.arc(cs.sx - rs * 0.2, cs.sy - rs * 0.1, rs * 0.11, 0, Math.PI * 2);
         ctx.arc(cs.sx + rs * 0.2, cs.sy - rs * 0.1, rs * 0.11, 0, Math.PI * 2);
         ctx.fill();
-      }, [currentN, activePattern, view, size, showNumbers]);
+      }, [currentN, activeQuad, view, size, showNumbers, showPrimes, primePts, spiral]);
 
       // ---------- 操作 ----------
       const applyTarget = () => {
-        const v = clampN(parseInt(targetInput) || 1);
-        setTargetInput(String(v));
-        setTargetN(v);
-        return v;
+        const v = clampN(parseInt(targetInput));
+        const val = Number.isNaN(v) ? minN : v;
+        setTargetInput(String(val));
+        setTargetN(val);
+        return val;
       };
       const walkToTarget = () => {
         if (isPlaying) { setIsPlaying(false); return; }
         const v = applyTarget();
         if (v !== currentN) { setFollow(true); setIsPlaying(true); }
       };
-      const jumpToTarget = () => {
-        const v = applyTarget();
+      const jumpTo = (v) => {
         setIsPlaying(false);
         setCurrentN(v);
-        const p = getCoords(v);
-        setView((vw) => ({ ...vw, cx: p.x, cy: p.y }));
+        setTargetN(v); setTargetInput(String(v));
+        const p = spiral.coords(v);
+        setView((vw) => ({ ...vw, cx: p.x, cy: p.y, zoom: Math.max(vw.zoom, 20) }));
       };
-      const resetWalk = () => { setIsPlaying(false); setCurrentN(1); setView((v) => ({ ...v, cx: 0, cy: 0 })); };
+      const jumpToTarget = () => jumpTo(applyTarget());
+      const resetWalk = () => { setIsPlaying(false); setCurrentN(minN); setView((v) => ({ ...v, cx: 0, cy: 0 })); };
 
       const reverseTarget = () => {
         const x = parseInt(reverseX) || 0, y = parseInt(reverseY) || 0;
-        const n = clampN(getN(x, y));
+        const n = clampN(spiral.nAt(x, y));
         setTargetN(n); setTargetInput(String(n));
         return { n, x, y };
       };
       const reverseWalk = () => { const { n } = reverseTarget(); setFollow(true); setIsPlaying(n !== currentN); };
       const reverseJump = () => { const { n, x, y } = reverseTarget(); setIsPlaying(false); setCurrentN(n); setView((v) => ({ ...v, cx: x, cy: y })); };
 
-      const centerOrigin = () => setView({ cx: 0, cy: 0, zoom: 32 });
-      const centerRobot = () => { const p = getCoords(currentN); setFollow(true); setView((v) => ({ ...v, cx: p.x, cy: p.y })); };
+      const centerOrigin = () => setView({ cx: 0, cy: 0, zoom: showPrimes ? 3 : 32 });
+      const centerRobot = () => { const p = spiral.coords(currentN); setFollow(true); setView((v) => ({ ...v, cx: p.x, cy: p.y })); };
 
-      const cur = getCoords(currentN);
+      const cur = spiral.coords(currentN);
+      const isDefaultRules = rules.start === 1 && !rules.cw && rules.first === 0;
 
       const btn = 'rounded-xl font-bold transition-colors active:scale-[0.98]';
       const input = 'w-full border border-slate-300 rounded-xl px-3 py-2.5 text-base font-mono focus:ring-2 outline-none bg-white';
+      const seg = (on) => `flex-1 py-2 rounded-lg text-sm font-bold border transition-colors ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`;
 
       return (
         <div className="flex flex-col h-[100dvh] text-slate-900">
-          {/* 標題列 */}
           <header className="bg-white border-b px-3 md:px-6 py-2.5 flex items-center gap-3 shadow-sm z-20 flex-none">
             <a href="./" className="text-sm font-semibold text-slate-500 hover:text-indigo-600 pr-3 border-r border-slate-200 whitespace-nowrap">← 作品集</a>
             <div className="min-w-0">
@@ -481,16 +717,10 @@
           <main className="flex flex-col md:flex-row flex-1 min-h-0">
             {/* 畫布 */}
             <div ref={boxRef} className="relative flex-none h-[52vh] md:h-auto md:flex-1 md:order-2 overflow-hidden border-b md:border-b-0 border-slate-200">
-              <canvas
-                ref={canvasRef}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-                className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
-              />
+              <canvas ref={canvasRef}
+                onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
+                className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
 
-              {/* 狀態卡 */}
               <div className="absolute top-3 left-3 bg-white/95 backdrop-blur shadow-lg rounded-2xl border border-slate-200 px-4 py-3 pointer-events-none">
                 <div className="flex items-end gap-5">
                   <div>
@@ -504,9 +734,13 @@
                     <div className="text-2xl md:text-4xl font-black text-emerald-600 font-mono leading-none">({cur.x}, {cur.y})</div>
                   </div>
                 </div>
+                {!isDefaultRules && (
+                  <div className="text-[11px] text-teal-700 font-bold mt-2">
+                    規則：起點 {rules.start}・{rules.cw ? '順時針' : '逆時針'}・第一步向{DIRS[rules.first]}
+                  </div>
+                )}
               </div>
 
-              {/* 視角按鈕 */}
               <div className="absolute bottom-3 right-3 flex flex-col gap-2">
                 {[['＋', () => zoomAt(1.4, size.w / 2, size.h / 2), '放大'],
                   ['－', () => zoomAt(1 / 1.4, size.w / 2, size.h / 2), '縮小'],
@@ -524,12 +758,12 @@
             </div>
 
             {/* 控制面板 */}
-            <aside className="flex-1 md:flex-none md:w-[380px] md:order-1 bg-white md:border-r overflow-y-auto">
+            <aside className="flex-1 md:flex-none md:w-[400px] md:order-1 bg-white md:border-r overflow-y-auto">
               <div className="p-4 md:p-5 space-y-5">
 
                 <section className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
                   <h2 className="font-bold text-indigo-700 mb-3">① 輸入 n，看機器人走到哪</h2>
-                  <input type="number" inputMode="numeric" min="1" max={MAX_N} value={targetInput}
+                  <input type="number" inputMode="numeric" min={minN} max={MAX_N} value={targetInput}
                     onChange={(e) => setTargetInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && walkToTarget()}
                     className={input + ' focus:ring-indigo-400 mb-2'} placeholder="例如 2025" />
@@ -542,7 +776,7 @@
                   </div>
                   <label className="block mt-3">
                     <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
-                      <span>行走速度</span><span className="font-mono">每秒 {fmtNum(stepsPerSec)} 步</span>
+                      <span>行走速度</span><span className="font-mono">每秒 {stepsPerSec.toLocaleString('en-US')} 步</span>
                     </div>
                     <input type="range" min="0" max={STEPS_PER_SEC.length - 1} value={speedLevel}
                       onChange={(e) => setSpeedLevel(parseInt(e.target.value))} className="w-full accent-indigo-600" />
@@ -570,13 +804,13 @@
                   <h2 className="font-bold text-slate-700 mb-1">③ 四個轉角</h2>
                   <p className="text-xs text-slate-500 mb-2">點一個方向，畫面上會標出那個轉角的所有點。</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {PATTERN_ORDER.map((key) => {
-                      const p = PATTERNS[key];
-                      const on = activePattern === key;
+                    {QUAD_ORDER.map((qk) => {
+                      const q = QUADS[qk];
+                      const on = activeQuad === qk;
                       return (
-                        <button key={key} onClick={() => setActivePattern(on ? 'none' : key)}
+                        <button key={qk} onClick={() => setActiveQuad(on ? null : qk)}
                           className={`py-2.5 px-3 rounded-xl border text-left transition-all ${on ? 'bg-rose-50 border-rose-400 text-rose-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                          <div className="font-bold text-sm">{p.label}<span className="font-normal text-xs ml-1 opacity-70">{p.quad}</span></div>
+                          <div className="font-bold text-sm">{q.label}<span className="font-normal text-xs ml-1 opacity-70">{q.quad}</span></div>
                         </button>
                       );
                     })}
@@ -589,7 +823,51 @@
 
                 <section className="bg-rose-50/40 p-4 rounded-2xl border border-rose-100">
                   <h2 className="font-bold text-rose-700 mb-2">④ 找出一般式</h2>
-                  <FormulaLab pkey={activePattern} />
+                  <FormulaLab qkey={activeQuad} spiral={spiral} />
+                </section>
+
+                <section className="bg-violet-50/50 p-4 rounded-2xl border border-violet-100">
+                  <h2 className="font-bold text-violet-700 mb-2">⑤ 挑戰：只用公式找位置</h2>
+                  <LocateChallenge spiral={spiral} onJump={jumpTo} />
+                </section>
+
+                <section className="bg-amber-50/50 p-4 rounded-2xl border border-amber-100">
+                  <h2 className="font-bold text-amber-700 mb-2">⑥ 質數藏在哪裡？</h2>
+                  <PrimeLab spiral={spiral} showPrimes={showPrimes} setShowPrimes={togglePrimes} />
+                </section>
+
+                <section className="bg-teal-50/50 p-4 rounded-2xl border border-teal-100">
+                  <h2 className="font-bold text-teal-700 mb-1">⑦ 改變規則</h2>
+                  <p className="text-sm text-slate-600 mb-3">改了規則後，回到 ③④ 看看：一般式哪些地方變了？只是換了位置，還是式子本身也變了？</p>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 mb-1">起點的編號</div>
+                      <div className="flex gap-2">
+                        {[1, 0].map((s) => <button key={s} onClick={() => setRules((r) => ({ ...r, start: s }))} className={seg(rules.start === s)}>從 {s} 開始</button>)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 mb-1">繞行方向</div>
+                      <div className="flex gap-2">
+                        {[[false, '逆時針'], [true, '順時針']].map(([v, t]) => <button key={t} onClick={() => setRules((r) => ({ ...r, cw: v }))} className={seg(rules.cw === v)}>{t}</button>)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 mb-1">第一步往哪走</div>
+                      <div className="flex gap-2">
+                        {DIRS.map((d, i) => <button key={d} onClick={() => setRules((r) => ({ ...r, first: i }))} className={seg(rules.first === i)}>{d}</button>)}
+                      </div>
+                    </div>
+                    {!isDefaultRules && (
+                      <button onClick={() => setRules({ start: 1, cw: false, first: 0 })} className="text-sm font-bold text-slate-500 hover:text-teal-700">↺ 回到原本的規則</button>
+                    )}
+                    <div className="text-xs text-slate-500 bg-white rounded-xl border border-teal-100 p-3 space-y-1">
+                      <p className="font-bold text-teal-700">可以想想：</p>
+                      <p>・起點改成 0，四個轉角的式子都差了多少？為什麼？</p>
+                      <p>・改成順時針，或第一步改往上走，式子還是那四個嗎？只是跑到別的角落嗎？</p>
+                      <p>・起點改成 0 之後，質數的圖案還一樣嗎？</p>
+                    </div>
+                  </div>
                 </section>
               </div>
             </aside>
