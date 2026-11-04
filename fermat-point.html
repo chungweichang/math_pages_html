@@ -213,6 +213,41 @@
         dist(exactFermat, vertices.A) + dist(exactFermat, vertices.B) + dist(exactFermat, vertices.C)
       , [exactFermat, vertices]);
       
+      // 第 2、3 步：以 X 為中心，把 △MPX 旋轉，F 是固定不動的頂點
+      // （中心 C：M = A、F = B；中心 B：M = C、F = A；中心 A：M = B、F = C）
+      const PIVOTS = { C: { X: 'C', M: 'A', F: 'B' }, B: { X: 'B', M: 'C', F: 'A' }, A: { X: 'A', M: 'B', F: 'C' } };
+      const rotInfo = useMemo(() => {
+        const { X, M, F } = PIVOTS[pivot];
+        const deg = step === 3 ? 60 : rotationAngle;
+        const cX = vertices[X], cM = vertices[M], cF = vertices[F];
+        const Mp = rotatePoint(cM, cX, deg), Pp = rotatePoint(pPoint, cX, deg);
+        const FP = dist(cF, pPoint), PPp = dist(pPoint, Pp), PpMp = dist(Pp, Mp), FMp = dist(cF, Mp);
+        const broken = FP + PPp + PpMp;
+        return {
+          X, M, F, deg, cX, cM, cF, Mp, Pp, FP, PPp, PpMp, FMp, broken,
+          PX: dist(pPoint, cX), PM: dist(pPoint, cM),
+          angFPX: getAngle(cF, pPoint, cX), angMPX: getAngle(cM, pPoint, cX),
+          collinear: broken - FMp < 0.3,
+        };
+      }, [pivot, step, rotationAngle, vertices, pPoint]);
+
+      // 第 5 步：∠A ≥ 120° 時，把 △APB 繞 A 旋轉 (180° − ∠A)，讓 B 落在 CA 的延長線上
+      const obt = useMemo(() => {
+        if (step !== 5) return null;
+        const { A, B, C } = vertices;
+        const ux = A.x - C.x, uy = A.y - C.y, ul = Math.hypot(ux, uy);
+        const AB = dist(A, B);
+        const Bp = { x: A.x + ux / ul * AB, y: A.y + uy / ul * AB };
+        let th = Math.atan2(Bp.y - A.y, Bp.x - A.x) - Math.atan2(B.y - A.y, B.x - A.x);
+        while (th > Math.PI) th -= 2 * Math.PI;
+        while (th < -Math.PI) th += 2 * Math.PI;
+        const Pp = rotatePointByAngle(pPoint, A, th);
+        const PA = dist(pPoint, A), PB = dist(pPoint, B), PC = dist(pPoint, C), PPp = dist(pPoint, Pp);
+        return { Bp, Pp, thDeg: Math.abs(th) * 180 / Math.PI, PA, PB, PC, PPp, PpBp: dist(Pp, Bp), BpC: dist(Bp, C), AB, AC: dist(A, C) };
+      }, [step, vertices, pPoint]);
+
+      useEffect(() => { fitView(); }, [size, step]);
+
       const diff = currentSum - minSum;
       const isOptimal = diff < 2; 
 
@@ -247,11 +282,17 @@
       }, []);
 
       const fitView = () => {
-        const s = Math.min(size.width / WORLD.w, size.height / WORLD.h);
+        // 一般步驟看整個 800×600；第 4 步要把三個外接正三角形也放進畫面
+        let b = { x0: 0, y0: 0, x1: WORLD.w, y1: WORLD.h };
+        if (step === 4) {
+          const pts = [vertices.A, vertices.B, vertices.C, constructionPoints.A_prime, constructionPoints.B_prime, constructionPoints.C_prime];
+          b = { x0: Math.min(...pts.map(p => p.x)) - 30, y0: Math.min(...pts.map(p => p.y)) - 30,
+                x1: Math.max(...pts.map(p => p.x)) + 30, y1: Math.max(...pts.map(p => p.y)) + 30 };
+        }
+        const s = Math.min(size.width / ((b.x1 - b.x0) * 1.08), size.height / ((b.y1 - b.y0) * 1.08));
         setScale(s);
-        setOffset({ x: (size.width - WORLD.w * s) / 2, y: (size.height - WORLD.h * s) / 2 });
+        setOffset({ x: (size.width - (b.x0 + b.x1) * s) / 2, y: (size.height - (b.y0 + b.y1) * s) / 2 });
       };
-      useEffect(() => { fitView(); }, [size]);
 
       // 以畫面中心為基準縮放
       const zoomBy = (factor) => {
@@ -414,38 +455,39 @@
             drawText('P', pPoint, {x:10,y:0}, pColor);
         }
 
+        const fillTri = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle = color; ctx.fill(); };
+        const bold = 'bold 15px sans-serif';
+
         // Step 2 & 3
         if (step === 2 || step === 3) {
-            const rotDeg = step === 3 ? 60 : rotationAngle; 
-            let center, movingPt1, movingPt2, fixedPt1, targetLabel;
-            
-            if (pivot === 'C') { center = C; movingPt1 = A; movingPt2 = pPoint; fixedPt1 = B; targetLabel = "A'"; } 
-            else if (pivot === 'B') { center = B; movingPt1 = C; movingPt2 = pPoint; fixedPt1 = A; targetLabel = "C'"; } 
-            else { center = A; movingPt1 = B; movingPt2 = pPoint; fixedPt1 = C; targetLabel = "B'"; } 
-
-            const rotPt1 = rotatePoint(movingPt1, center, rotDeg);
-            const rotPt2 = rotatePoint(movingPt2, center, rotDeg);
-
-            ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(movingPt1.x, movingPt1.y); ctx.lineTo(movingPt2.x, movingPt2.y);
-            ctx.fillStyle = 'rgba(59, 130, 246, 0.05)'; ctx.fill(); 
-            ctx.beginPath(); ctx.moveTo(center.x, center.y); ctx.lineTo(rotPt1.x, rotPt1.y); ctx.lineTo(rotPt2.x, rotPt2.y);
-            ctx.fillStyle = 'rgba(249, 115, 22, 0.1)'; ctx.fill(); 
-
-            drawDot(pPoint, '#2563eb', 5); drawText('P', pPoint, {x:-10,y:-5}, '#2563eb');
-            drawDot(rotPt2, '#2563eb', 4); drawText(step===3||rotDeg===60?"P'":"", rotPt2, {x:10,y:10}, '#2563eb');
-            drawDot(rotPt1, '#ea580c'); drawText(step===3||rotDeg===60?targetLabel:"", rotPt1, {x:10,y:-10}, '#ea580c');
-
-            const startNode = fixedPt1; 
-            ctx.beginPath(); ctx.moveTo(startNode.x, startNode.y); ctx.lineTo(pPoint.x, pPoint.y);
-            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * px; ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(pPoint.x, pPoint.y); ctx.lineTo(rotPt2.x, rotPt2.y);
-            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * px; ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(rotPt2.x, rotPt2.y); ctx.lineTo(rotPt1.x, rotPt1.y);
-            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * px; ctx.stroke();
-            
-            if (rotDeg === 60) {
-                drawLine(center, rotPt1, '#ea580c', 1, [2,2]); 
+            const R = rotInfo;
+            const { cX, cM, cF, Mp, Pp } = R;
+            const full = R.deg === 60;
+            fillTri([cX, cM, pPoint], 'rgba(59,130,246,0.07)');
+            fillTri([cX, Mp, Pp], 'rgba(249,115,22,0.12)');
+            if (full) {
+                // △X M M' 是正三角形：M' 的位置和 P 無關
+                fillTri([cX, cM, Mp], 'rgba(16,185,129,0.06)');
+                drawLine(cM, Mp, '#10b981', 1.2, [4, 4]);
+                drawLine(cX, Mp, '#10b981', 1.2, [4, 4]);
+                // △X P P' 是正三角形
+                fillTri([cX, pPoint, Pp], 'rgba(5,150,105,0.18)');
+                // 目標：直線 F M'
+                drawLine(cF, Mp, R.collinear ? '#dc2626' : '#fca5a5', 1.5, [6, 5]);
+                // 相等的線段用同一個顏色
+                drawLine(cX, pPoint, '#059669', 3);
+                drawLine(pPoint, Pp, '#059669', 3);
+                drawLine(pPoint, cM, '#ea580c', 3);
+                drawLine(Pp, Mp, '#ea580c', 3);
+                drawLine(cF, pPoint, '#2563eb', 3);
+            } else {
+                drawLine(cF, pPoint, '#2563eb', 3);
+                drawLine(pPoint, Pp, '#2563eb', 3);
+                drawLine(Pp, Mp, '#2563eb', 3);
             }
+            drawDot(pPoint, '#2563eb', 6); drawText('P', pPoint, {x:-16,y:-8}, '#2563eb', bold);
+            drawDot(Pp, '#2563eb', 4); if (full) drawText("P'", Pp, {x:8,y:16}, '#2563eb', bold);
+            drawDot(Mp, '#ea580c', 5); if (full) drawText(R.M + "'", Mp, {x:8,y:-8}, '#ea580c', bold);
         }
 
         // Step 4
@@ -525,39 +567,23 @@
             drawDot(pPoint, pColor, 6);
             drawText('P', pPoint, {x:10,y:0}, pColor);
 
-            if (showObtuseProof) {
-                const targetPt = A_prime; 
-                const startNode = B;
-                const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2 * px, 2 * px]); ctx.lineWidth = 1 * px; ctx.stroke(); ctx.setLineDash([]); };
-                drawPoly([A, C, A_prime], 'rgba(16, 185, 129, 0.1)'); 
-                drawDot(A_prime, '#059669', 3); drawText("A'", A_prime, {x:5,y:5}, '#059669');
-
-                drawLine(startNode, targetPt, '#ef4444', 1.5, [5,5]);
-
-                const angAC = Math.atan2(A.y-C.y, A.x-C.x);
-                const angACA_p = Math.atan2(targetPt.y-C.y, targetPt.x-C.x);
-                const angleDiff = angACA_p - angAC;
-                
-                const pRot = rotatePointByAngle(pPoint, C, angleDiff);
-                drawDot(pRot, '#2563eb', 4); drawText("P'", pRot, {x:5,y:5}, '#2563eb');
-
-                ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(pPoint.x, pPoint.y); ctx.lineTo(C.x, C.y); ctx.closePath();
-                ctx.fillStyle = 'rgba(59, 130, 246, 0.1)'; ctx.fill();
-
-                ctx.beginPath(); ctx.moveTo(targetPt.x, targetPt.y); ctx.lineTo(pRot.x, pRot.y); ctx.lineTo(C.x, C.y); ctx.closePath();
-                ctx.fillStyle = 'rgba(249, 115, 22, 0.2)'; ctx.fill();
-
-                ctx.beginPath(); ctx.moveTo(startNode.x, startNode.y); ctx.lineTo(pPoint.x, pPoint.y);
-                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2 * px; ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(pPoint.x, pPoint.y); ctx.lineTo(pRot.x, pRot.y);
-                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2 * px; ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(pRot.x, pRot.y); ctx.lineTo(targetPt.x, targetPt.y);
-                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2 * px; ctx.stroke();
+            if (showObtuseProof && obt) {
+                const { Bp, Pp } = obt;
+                fillTri([A, pPoint, B], 'rgba(59,130,246,0.08)');
+                fillTri([A, Pp, Bp], 'rgba(249,115,22,0.15)');
+                drawLine(A, Bp, '#94a3b8', 1, [4, 4]);          // CA 的延長線
+                drawLine(Bp, C, '#dc2626', 1.5, [6, 5]);        // B'C = AB + AC
+                drawLine(pPoint, B, '#ea580c', 3); drawLine(Pp, Bp, '#ea580c', 3);   // PB = P'B'
+                drawLine(A, pPoint, '#059669', 1.5, [5, 4]); drawLine(A, Pp, '#059669', 1.5, [5, 4]);
+                drawLine(pPoint, Pp, '#059669', 3);             // PP' ≤ PA
+                drawLine(pPoint, C, '#2563eb', 3);
+                drawDot(Pp, '#2563eb', 4); drawText("P'", Pp, {x:8,y:16}, '#2563eb', bold);
+                drawDot(Bp, '#ea580c', 5); drawText("B'", Bp, {x:-26,y:-8}, '#ea580c', bold);
             }
         }
 
         ctx.restore();
-      }, [vertices, pPoint, step, isOptimal, rotationAngle, pivot, scale, offset, exactFermat, constructionStep, size, constructionPoints, showObtuseProof, isogonicCenter]);
+      }, [vertices, pPoint, step, isOptimal, rotationAngle, pivot, scale, offset, exactFermat, constructionStep, size, constructionPoints, showObtuseProof, isogonicCenter, rotInfo, obt]);
 
       // --- 互動邏輯 ---
       const handleMouseDown = (e) => {
@@ -623,6 +649,10 @@
       };
       
       const handleMouseUp = () => {
+        // 第 3 步：放開時若已經非常接近一直線，就把 P 吸到費馬點上，角度會剛好是 120°
+        if (isDragging === 'P' && step === 3 && rotInfo.broken - rotInfo.FMp < 4 && !exactFermat.isVertex) {
+            setPPoint({ x: exactFermat.x, y: exactFermat.y });
+        }
         setIsDragging(null);
         setIsPanning(false);
         setDragWarning('');
@@ -724,12 +754,7 @@
                             <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><RotateCcw size={16}/> 旋轉說明 (中心: {pivot})</h4>
                             <div className="text-sm text-slate-700 space-y-2">
                                 <p>將 <span className="font-bold text-orange-600">△{pivot === 'C' ? 'APC' : pivot === 'B' ? 'BPC' : 'APB'}</span> 繞 {pivot} 點旋轉 {step===3?60:rotationAngle}°。</p>
-                                {step === 3 && (
-                                    <div className="text-slate-600 text-xs mt-2 bg-blue-50 p-2 rounded border border-blue-100">
-                                        <p>現在請拖動 P 點，觀察藍色折線的變化。</p>
-                                        <p className="mt-1 font-bold text-blue-800">當折線變成什麼形狀時，路徑總和（數值）會達到最小？</p>
-                                    </div>
-                                )}
+                                {step === 3 && <p className="text-xs text-slate-500">相同顏色的線段一樣長，拖動 P 點試試看。</p>}
                             </div>
                         </div>
                     </div>
@@ -747,7 +772,7 @@
                 </div>
               </div>
 
-              <div className="w-full lg:w-80 flex flex-col gap-4">
+              <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto">
                   
                   {step === 1 && (
                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col h-full animate-in slide-in-from-right-4">
@@ -810,7 +835,7 @@
                   )}
 
                   {step > 1 && step < 4 && (
-                      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full flex flex-col shadow-sm animate-in fade-in">
+                      <div className="bg-white border border-slate-200 rounded-lg p-5 lg:min-h-full flex flex-col shadow-sm animate-in fade-in">
                           <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
                               {step===2 ? <RotateCcw size={20}/> : <CheckCircle size={20}/>}
                               {step===2 ? '2. 旋轉實驗' : '3. 幾何證明'}
@@ -846,14 +871,41 @@
                                   </div>
 
                                   {step === 2 && (
-                                      <p className="text-xs text-slate-500">
-                                          試著旋轉三角形，觀察邊長關係。
-                                      </p>
+                                      <div className="text-sm text-slate-700 bg-orange-50 border border-orange-100 rounded p-3 space-y-1.5">
+                                          <p className="text-[11px] font-bold text-orange-700">講義任務 2</p>
+                                          <p>把 △{rotInfo.M}P{rotInfo.X} 繞 {rotInfo.X} 點旋轉，拉到 60° 看看。</p>
+                                          {rotationAngle === 60 && (
+                                              <p className="font-bold text-slate-800">△{rotInfo.X}PP′ 是什麼三角形？為什麼要剛好轉 60°？換別的旋轉中心也一樣嗎？</p>
+                                          )}
+                                      </div>
                                   )}
-                                  <div className="lg:hidden text-sm text-slate-700 bg-blue-50 border border-blue-100 rounded p-3 space-y-1">
-                                      <p>將 <span className="font-bold text-orange-600">△{pivot === 'C' ? 'APC' : pivot === 'B' ? 'BPC' : 'APB'}</span> 繞 {pivot} 點旋轉 {step===3?60:rotationAngle}°。</p>
-                                      {step === 3 && <p className="font-bold text-blue-800">拖動 P 點：當藍色折線變成什麼形狀時，總和會最小？</p>}
-                                  </div>
+                                  {step === 3 && (
+                                      <div className="space-y-3 text-sm text-slate-700">
+                                          <div className="rounded border border-emerald-200 bg-emerald-50 p-3 space-y-1">
+                                              <p className="text-[11px] font-bold text-emerald-700">講義任務 3：{rotInfo.M}′ 會跟著動嗎？</p>
+                                              <p>拖動 P 點時，{rotInfo.M}′ 的位置都不變。連接 {rotInfo.M}{rotInfo.M}′，△{rotInfo.X}{rotInfo.M}{rotInfo.M}′ 是正三角形（綠色虛線）。</p>
+                                          </div>
+                                          <div className="rounded border border-slate-200 p-3 space-y-1.5">
+                                              <p className="text-[11px] font-bold text-blue-700">講義任務 4：為什麼這樣最小？</p>
+                                              <p><span className="text-emerald-700 font-bold">綠色</span>：△{rotInfo.X}PP′ 是正三角形，所以 P{rotInfo.X} = PP′ <span className="font-mono text-xs text-slate-500">（{rotInfo.PX.toFixed(1)} = {rotInfo.PPp.toFixed(1)}）</span></p>
+                                              <p><span className="text-orange-600 font-bold">橘色</span>：旋轉不改變長度，所以 P{rotInfo.M} = P′{rotInfo.M}′ <span className="font-mono text-xs text-slate-500">（{rotInfo.PM.toFixed(1)} = {rotInfo.PpMp.toFixed(1)}）</span></p>
+                                              <p className="font-mono text-xs bg-slate-50 rounded p-2 leading-relaxed">
+                                                  PA + PB + PC<br/>= {rotInfo.F}P + PP′ + P′{rotInfo.M}′ = {rotInfo.broken.toFixed(1)}<br/>≥ {rotInfo.F}{rotInfo.M}′ = {rotInfo.FMp.toFixed(1)}
+                                              </p>
+                                          </div>
+                                          <div className={`rounded border p-3 space-y-1 ${rotInfo.collinear ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
+                                              {rotInfo.collinear ? (
+                                                  <>
+                                                      <p className="font-bold text-amber-800">{rotInfo.F}、P、P′、{rotInfo.M}′ 四點共線！</p>
+                                                      <p>∠{rotInfo.F}P{rotInfo.X} = {rotInfo.angFPX.toFixed(1)}°，∠{rotInfo.M}P{rotInfo.X} = {rotInfo.angMPX.toFixed(1)}°</p>
+                                                      <p className="text-xs text-slate-600">這就是第 1 步數據表裡看到的 120°。想想看：為什麼共線時這兩個角一定是 120°？</p>
+                                                  </>
+                                              ) : (
+                                                  <p>拖動 P 點，把折線拉成一直線（目前還差 {(rotInfo.broken - rotInfo.FMp).toFixed(1)}）。</p>
+                                              )}
+                                          </div>
+                                      </div>
+                                  )}
                               </div>
                           </div>
 
@@ -881,7 +933,7 @@
                   )}
 
                   {step === 4 && (
-                      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full flex flex-col shadow-sm animate-in fade-in">
+                      <div className="bg-white border border-slate-200 rounded-lg p-5 lg:min-h-full flex flex-col shadow-sm animate-in fade-in">
                           <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
                               <PenTool size={20}/> 4. 構造統整
                           </h3>
@@ -944,19 +996,31 @@
                                           <CheckCircle size={16}/> 驗證成功：三線共點！
                                       </p>
                                       <p className="text-xs text-slate-600">
-                                          恭喜你完成了費馬點的探究之旅！
+                                          三角形的三個角都小於 120° 時，這個交點 O 就是費馬點。
                                       </p>
+                                  </div>
+                              )}
+                              {constructionStep === 3 && (
+                                  <div className="bg-white border border-slate-200 rounded-lg p-3 text-sm text-slate-700 space-y-2">
+                                      <p className="text-[11px] font-bold text-purple-700">講義任務 5</p>
+                                      <p className="font-mono text-xs bg-slate-50 rounded p-2">
+                                          AC′ = {dist(vertices.A, constructionPoints.C_prime).toFixed(1)}<br/>
+                                          BA′ = {dist(vertices.B, constructionPoints.A_prime).toFixed(1)}<br/>
+                                          CB′ = {dist(vertices.C, constructionPoints.B_prime).toFixed(1)}
+                                      </p>
+                                      <p><b>三段一樣長。</b>提示：比較 △C′CA 和 △BCA′，哪兩邊、哪個夾角相等？</p>
+                                      <p><b>為什麼三線共點？</b>回想第 3 步：三個角都是 120° 的那個點，不論以 A、B 或 C 為中心旋轉，折線都會拉成直線，所以它同時在這三條線上。</p>
                                   </div>
                               )}
                           </div>
 
-                          <div className="mt-auto pt-4 border-t border-slate-100 flex justify-center">
-                               <button onClick={handleReset} className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-bold text-slate-600 flex items-center gap-2">
+                          <div className="mt-auto pt-4 border-t border-slate-100 flex flex-wrap justify-center gap-2">
+                               <button onClick={handleReset} className="px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-bold text-slate-600 flex items-center gap-2 whitespace-nowrap">
                                   <RefreshCw size={16}/> 重新開始探究
                                </button>
                                
                                {constructionStep > 0 && (
-                                   <button onClick={() => setConstructionStep(s => s-1)} className="ml-2 px-3 py-2 border rounded hover:bg-slate-50 text-slate-600 text-sm flex items-center gap-1">
+                                   <button onClick={() => setConstructionStep(s => s-1)} className="px-3 py-2 border rounded hover:bg-slate-50 text-slate-600 text-sm flex items-center gap-1 whitespace-nowrap">
                                        <ArrowLeft size={14}/> 上一步
                                    </button>
                                )}
@@ -964,7 +1028,7 @@
                                {constructionStep === 3 && (
                                    <button 
                                       onClick={() => { setStep(5); setMaxStepReached(5); }}
-                                      className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded font-bold text-sm hover:bg-emerald-700"
+                                      className="px-3 py-2 bg-emerald-600 text-white rounded font-bold text-sm hover:bg-emerald-700 whitespace-nowrap"
                                     >
                                       下一步：極端狀況
                                     </button>
@@ -974,14 +1038,14 @@
                   )}
 
                   {step === 5 && (
-                      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full flex flex-col shadow-sm animate-in fade-in">
+                      <div className="bg-white border border-slate-200 rounded-lg p-5 lg:min-h-full flex flex-col shadow-sm animate-in fade-in">
                           <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
                               <AlertTriangle size={20}/> 5. 極端狀況
                           </h3>
                           
                           <div className="flex-1 space-y-4">
                               <div className="text-sm text-slate-600 bg-orange-50 p-3 rounded border border-orange-100">
-                                  <p className="font-bold text-orange-800 mb-1">當角 A 大於 120° 時...</p>
+                                  <p className="font-bold text-orange-800 mb-1">當 ∠A ≥ 120° 時…</p>
                                   <p>觀察畫面上的：</p>
                                   <ul className="list-disc list-inside pl-1 space-y-1">
                                       <li><span className="font-bold text-gray-500">灰色點 O</span>：理論交點 (跑去哪了？)</li>
@@ -1011,16 +1075,24 @@
                                   </button>
                               </div>
 
-                              {showObtuseProof && (
-                                  <div className="text-xs text-blue-800 bg-blue-50 p-3 rounded border border-blue-100 animate-in fade-in">
-                                      <p>觀察紅色的虛線 <span className="font-bold">B → A'</span>（這是理論上的最短路徑直線）。</p>
-                                      <p className="mt-2">這條線沒有經過三角形內部！所以我們只能停在邊界上（頂點 A），這就是最好的解。</p>
+                              {showObtuseProof && obt && (
+                                  <div className="text-sm text-slate-700 bg-blue-50 p-3 rounded border border-blue-100 space-y-1.5 animate-in fade-in">
+                                      <p className="text-[11px] font-bold text-blue-700">講義任務 6</p>
+                                      <p>這次不轉 60°，改把 △APB 繞 A 旋轉 180° − ∠A = <b>{obt.thDeg.toFixed(0)}°</b>，讓 B 剛好轉到 CA 延長線上的 B′。</p>
+                                      <p><span className="text-orange-600 font-bold">橘色</span>：PB = P′B′</p>
+                                      <p><span className="text-emerald-700 font-bold">綠色</span>：△APP′ 是等腰三角形，頂角 {obt.thDeg.toFixed(0)}° ≤ 60°，所以 PP′ ≤ PA <span className="font-mono text-xs text-slate-500">（{obt.PPp.toFixed(1)} ≤ {obt.PA.toFixed(1)}）</span></p>
+                                      <p className="font-mono text-xs bg-white rounded p-2 leading-relaxed">
+                                          PA + PB + PC = {(obt.PA + obt.PB + obt.PC).toFixed(1)}<br/>
+                                          ≥ PP′ + P′B′ + PC = {(obt.PPp + obt.PpBp + obt.PC).toFixed(1)}<br/>
+                                          ≥ B′C = AB + AC = {obt.BpC.toFixed(1)}
+                                      </p>
+                                      <p className="text-xs text-slate-600">要讓等號成立，PP′ 必須等於 PA。∠A &gt; 120° 時，只有 P 和 A 重合才做得到，所以最小值是 AB + AC，P 在頂點 A。（∠A 剛好 120° 時轉 60°，就回到第 3 步的情形。）</p>
                                   </div>
                               )}
                           </div>
 
-                          <div className="mt-auto pt-4 border-t border-slate-100 flex justify-center">
-                               <button onClick={handleReset} className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-bold text-slate-600 flex items-center gap-2">
+                          <div className="mt-auto pt-4 border-t border-slate-100 flex flex-wrap justify-center gap-2">
+                               <button onClick={handleReset} className="px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-bold text-slate-600 flex items-center gap-2 whitespace-nowrap">
                                   <RefreshCw size={16}/> 重新開始探究
                                </button>
                           </div>

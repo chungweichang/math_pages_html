@@ -37,10 +37,6 @@
   <!-- 引入 Lucide Icons -->
   <script src="https://unpkg.com/lucide@0.469.0"></script>
 
-  <!-- 引入 Firebase Compat (v8/v9 相容版) -->
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
   <style>
     /* 隱藏捲軸 */
@@ -55,38 +51,12 @@
     const { useState, useEffect, useRef } = React;
 
     // ==========================================
-    // 老師請注意：Firebase 排行榜設定區
+    // 老師請注意：Google 試算表排行榜設定
     // ==========================================
-    // 如果您想要開啟「雲端排行榜功能」，請將您的 Firebase 設定貼在下方
-    // 如果留空 (null)，遊戲依然可以正常玩，只是排行榜會顯示「單機模式」
-    const FIREBASE_CONFIG = null; 
-    /* 範例格式：
-    const FIREBASE_CONFIG = {
-      apiKey: "AIzaSy...",
-      authDomain: "your-app.firebaseapp.com",
-      projectId: "your-app",
-      storageBucket: "your-app.appspot.com",
-      messagingSenderId: "123456789",
-      appId: "1:12345:web:abcdef"
-    };
-    */
-    const APP_ID = 'factorization-game'; 
-
-    let app, auth, db;
-    let initError = null;
-
-    try {
-      if (FIREBASE_CONFIG) {
-        app = firebase.initializeApp(FIREBASE_CONFIG);
-        auth = firebase.auth();
-        db = firebase.firestore();
-      } else {
-        console.warn("未偵測到 Firebase 設定，已啟用單機模式。");
-      }
-    } catch (e) {
-      console.error("Firebase Init Error:", e);
-      initError = e.message;
-    }
+    // 依照 apps-script/Code.gs 開頭的步驟部署後，把「網頁應用程式網址」（結尾是 /exec）貼在下面。
+    // 留空字串時，遊戲照樣可以玩，只是不會記錄成績，排行榜顯示「單機模式」。
+    const SHEET_API_URL = '';
+    const LEADERBOARD_REFRESH_MS = 15000; // 排行榜每 15 秒自動更新一次
 
     // ==========================================
     // Lucide Icon 橋接器 (自動將原本的元件轉為 SVG)
@@ -158,13 +128,15 @@
     };
 
     const FactorizationGame = () => {
-      const [systemError, setSystemError] = useState(initError);
-      const [isAuthReady, setIsAuthReady] = useState(false);
-      const [authInitiated, setAuthInitiated] = useState(false); 
-      const [leaderboardError, setLeaderboardError] = useState(null); 
+      const [systemError, setSystemError] = useState(null);
+      const isAuthReady = true;
+      const [leaderboardError, setLeaderboardError] = useState(SHEET_API_URL ? null : '單機模式（尚未設定成績記錄網址）');
+      const [leaderboardUpdatedAt, setLeaderboardUpdatedAt] = useState(null);
+      const [uploadStatus, setUploadStatus] = useState(null); // null | 'uploading' | 'done' | 'failed'
 
-      const [user, setUser] = useState(null);
       const [playerName, setPlayerName] = useState('');
+      const [playerClass, setPlayerClass] = useState('');
+      const [playerSeat, setPlayerSeat] = useState('');
       const [hasEnteredName, setHasEnteredName] = useState(false);
       
       const [gameState, setGameState] = useState('login'); 
@@ -189,91 +161,56 @@
       const startTimeRef = useRef(0); 
       const [sessionDuration, setSessionDuration] = useState(0); 
       const recentProblemsRef = useRef([]); 
+      const wrongListRef = useRef([]); // 這一局答錯的題目（含學生的作答）
 
       const [leaderboardData, setLeaderboardData] = useState([]);
-      const [isUploading, setIsUploading] = useState(false);
 
       const timerRef = useRef(null);
       const PRACTICE_LIMITS = { 1: 20, 2: 40, 3: 60 };
       const TIME_ATTACK_DURATION = 120; 
 
-      // --- Firebase Auth 相容版寫法 ---
-      useEffect(() => {
-        if (systemError) return;
-        
-        if (!auth) {
-          // 如果沒有填寫 Firebase 設定，直接進入單機模式
-          setUser({ uid: 'local-user' });
-          setIsAuthReady(true);
-          setAuthInitiated(true);
-          setLeaderboardError("單機模式運行中 (未連接資料庫)");
-          return;
-        }
-
-        let timeoutId = setTimeout(() => {
-          if (!user) {
-            setSystemError("連線逾時 (Timeout): 無法連接到資料庫。");
-          }
-        }, 8000);
-
-        const initAuth = async () => {
-          try {
-            await auth.signInAnonymously();
-          } catch (e) {
-            console.error("Auth Error:", e);
-            setSystemError(`登入失敗 (${e.code}): ${e.message}. 請確認網路連線。`);
-          } finally {
-            setTimeout(() => setAuthInitiated(true), 500);
-          }
-        };
-
-        initAuth();
-        const unsubscribe = auth.onAuthStateChanged((u) => {
-          if (u) {
-            setUser(u);
-            setIsAuthReady(true);
-            clearTimeout(timeoutId); 
-          }
-        });
-        return () => {
-          unsubscribe();
-          clearTimeout(timeoutId);
-        };
-      }, []);
-
-      // --- 讀取排行榜相容版寫法 ---
-      useEffect(() => {
-        if (!db || !user || systemError || !authInitiated) return;
-        
-        const q = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('scores');
-        
-        const unsubscribe = q.onSnapshot((snapshot) => {
-          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setLeaderboardData(data);
-          setLeaderboardError(null); 
-        }, (error) => {
-          console.error("Error fetching leaderboard:", error);
-          if (error.code === 'permission-denied') {
-             setLeaderboardError("無法讀取: 權限不足");
-          } else {
-             setLeaderboardError("連線異常");
-          }
-        });
-
-        return () => unsubscribe();
-      }, [user, systemError, authInitiated]);
-
-      const handleNameSubmit = () => {
-        if (playerName.trim().length > 0) {
-          setHasEnteredName(true);
-          setGameState('menu');
-          localStorage.setItem('factorization_player_name', playerName);
+      // --- 排行榜：從 Google 試算表讀取，顯示時每 15 秒更新 ---
+      const fetchLeaderboard = async (mode = gameMode, lv = level) => {
+        if (!SHEET_API_URL) return;
+        try {
+          const res = await fetch(`${SHEET_API_URL}?mode=${encodeURIComponent(mode)}&level=${lv}`);
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || 'error');
+          setLeaderboardData(data.rows);
+          setLeaderboardError(null);
+          setLeaderboardUpdatedAt(new Date());
+        } catch (e) {
+          console.error('Leaderboard error:', e);
+          setLeaderboardError('排行榜暫時連不上，稍後會自動重試');
         }
       };
 
+      const showingLeaderboard = gameState === 'leaderboard' || gameState === 'ended';
       useEffect(() => {
-        const savedName = localStorage.getItem('factorization_player_name');
-        if (savedName) setPlayerName(savedName);
+        if (!showingLeaderboard || !SHEET_API_URL) return;
+        setLeaderboardData([]);
+        fetchLeaderboard(gameMode, level);
+        const t = setInterval(() => fetchLeaderboard(gameMode, level), LEADERBOARD_REFRESH_MS);
+        return () => clearInterval(t);
+      }, [showingLeaderboard, gameMode, level]);
+
+      const readSaved = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+      const writeSaved = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+
+      const canEnter = playerName.trim() && playerClass.trim() && playerSeat.trim();
+      const handleNameSubmit = () => {
+        if (!canEnter) return;
+        setHasEnteredName(true);
+        setGameState('menu');
+        writeSaved('factorization_player_name', playerName.trim());
+        writeSaved('factorization_player_class', playerClass.trim());
+        writeSaved('factorization_player_seat', playerSeat.trim());
+      };
+
+      useEffect(() => {
+        setPlayerName(readSaved('factorization_player_name'));
+        setPlayerClass(readSaved('factorization_player_class'));
+        setPlayerSeat(readSaved('factorization_player_seat'));
       }, []);
 
       const startGame = (mode) => {
@@ -284,6 +221,8 @@
         setStats({ correct: 0, incorrect: 0, maxStreak: 0 });
         setFeedback(null);
         setShowSolution(false);
+        setUploadStatus(null);
+        wrongListRef.current = [];
         startTimeRef.current = Date.now();
         
         if (mode === 'survival') {
@@ -326,6 +265,7 @@
       }, [isTimerActive, timeLeft, gameState]);
 
       const handleTimeUp = () => {
+        if (gameMode !== 'timeAttack') recordWrong('timeout');
         if (gameMode === 'practice') {
           setIsTimerActive(false);
           setFeedback('timeout');
@@ -349,35 +289,39 @@
         }
       };
 
-      const endGame = async () => {
+      const endGame = () => {
         setGameState('ended');
         setIsTimerActive(false);
-        
-        const endTimestamp = Date.now();
-        const durationMs = endTimestamp - startTimeRef.current;
-        const durationSec = Math.floor(durationMs / 1000);
-        setSessionDuration(durationSec);
+        setSessionDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      };
 
-        if (db && user && score > 0) {
-          setIsUploading(true);
-          try {
-            await db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('scores').add({
-              name: playerName,
-              score: score,
-              mode: gameMode,
-              level: level,
-              timestamp: endTimestamp,
-              stats: stats,
-              duration: durationSec,
-              totalQuestions: stats.correct + stats.incorrect,
-              userId: user.uid
-            });
-          } catch (e) {
-            console.error("Error uploading score", e);
-          } finally {
-            setIsUploading(false);
-          }
-        }
+      // 結算畫面出現後才上傳：此時分數與答對/答錯次數都已更新完成
+      useEffect(() => {
+        if (gameState !== 'ended' || !SHEET_API_URL || score <= 0) return;
+        setUploadStatus('uploading');
+        fetch(SHEET_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // 用 text/plain 才不會被瀏覽器擋（CORS）
+          body: JSON.stringify({
+            name: playerName.trim(), cls: playerClass.trim(), seat: playerSeat.trim(),
+            mode: gameMode, level, score,
+            correct: stats.correct, incorrect: stats.incorrect, maxStreak: stats.maxStreak,
+            duration: Math.floor((Date.now() - startTimeRef.current) / 1000),
+            wrong: wrongListRef.current,
+          }),
+        })
+          .then(r => r.json())
+          .then(d => { setUploadStatus(d.ok ? 'done' : 'failed'); setTimeout(() => fetchLeaderboard(), 800); })
+          .catch(() => setUploadStatus('failed'));
+      }, [gameState]);
+
+      // 記下答錯（或超時）的題目與學生的作答
+      const recordWrong = (reason) => {
+        if (!problem) return;
+        const { a1, b1, a2, b2 } = userInput;
+        const term = (a, b) => `(${a === '' || a === '1' ? '' : a === '-' || a === '-1' ? '-' : a}x${b === '' ? '' : (b.startsWith('-') ? ' - ' + b.slice(1) : ' + ' + b)})`;
+        const answered = (a1 + b1 + a2 + b2) === '' ? '未作答' : term(a1, b1) + term(a2, b2);
+        wrongListRef.current.push(`${formatPolynomial(problem.A, problem.B, problem.C)}（${reason === 'timeout' ? '超時，' : ''}作答 ${answered}）`);
       };
 
       const generateProblem = (currentMode = gameMode, currentLevel = level) => {
@@ -413,6 +357,8 @@
           if (gcd(a1, b1) > 1 || gcd(a2, b2) > 1) continue;
           // 第 2 級至少要有一個首項係數不是 1，和第 1 級區隔
           if (currentLevel === 2 && a1 * a2 === 1) continue;
+          // 第 2、3 級偶爾出現首項係數為負的題目（約 15%）
+          if (currentLevel >= 2 && Math.random() < 0.15) a1 = -a1;
 
           let p1 = { a: a1, b: b1 };
           let p2 = { a: a2, b: b2 };
@@ -499,6 +445,7 @@
       };
 
       const handleIncorrect = () => {
+        recordWrong('wrong');
         setFeedback('incorrect');
         setStreak(0);
         setStats(s => ({ ...s, incorrect: s.incorrect + 1 }));
@@ -660,11 +607,7 @@
       };
 
       const LeaderboardView = () => {
-        const filteredData = leaderboardData
-          .filter(item => item.mode === gameMode && item.level === level)
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 10); 
-
+        const me = (e) => e.name === playerName.trim() && e.cls === playerClass.trim() && e.seat === playerSeat.trim();
         return (
           <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
             <div className="bg-indigo-600 p-4 text-white text-center">
@@ -672,20 +615,23 @@
                 <Trophy className="text-yellow-300" /> 
                 {gameMode === 'timeAttack' ? '限時衝刺' : gameMode === 'survival' ? '生存挑戰' : '單題練習'} (Lv.{level}) 排行榜
               </h3>
+              {leaderboardUpdatedAt && !leaderboardError && (
+                <p className="text-[11px] text-indigo-200 mt-1">每 15 秒自動更新・上次更新 {leaderboardUpdatedAt.toLocaleTimeString('zh-TW', { hour12: false })}</p>
+              )}
             </div>
-            <div className="max-h-60 overflow-y-auto">
+            <div className="max-h-72 overflow-y-auto">
               {leaderboardError ? (
                  <div className="p-8 text-center text-rose-400 flex flex-col items-center gap-2 font-bold">
                     <WifiOff size={24} />
                     <span>{leaderboardError}</span>
                  </div>
-              ) : filteredData.length === 0 ? (
-                <div className="p-8 text-center text-slate-400">目前還沒有紀錄，快來當第一名！</div>
+              ) : leaderboardData.length === 0 ? (
+                <div className="p-8 text-center text-slate-400">{leaderboardUpdatedAt ? '目前還沒有紀錄，快來當第一名！' : '讀取中…'}</div>
               ) : (
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 font-bold">
                     <tr>
-                      <th className="p-3 w-12">#</th>
+                      <th className="p-3 w-10">#</th>
                       <th className="p-3">姓名</th>
                       <th className="p-3 text-center hidden sm:table-cell">時間</th>
                       <th className="p-3 text-center hidden sm:table-cell">正確率</th>
@@ -693,30 +639,24 @@
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredData.map((entry, index) => {
-                      const total = (entry.stats?.correct || 0) + (entry.stats?.incorrect || 0);
-                      const accuracy = total > 0 ? Math.round((entry.stats.correct / total) * 100) : 0;
-                      
-                      return (
-                        <tr key={entry.id} className={entry.name === playerName ? "bg-indigo-50" : ""}>
-                          <td className="p-3 font-mono text-slate-400 font-bold">{index + 1}</td>
-                          <td className="p-3 font-bold text-slate-700">
-                            {entry.name}
-                            <div className="sm:hidden text-xs text-slate-400 font-normal mt-1 flex items-center gap-2">
-                              <span className="flex items-center gap-0.5"><Clock size={10}/> {entry.duration ? formatTime(entry.duration) : '--:--'}</span>
-                              <span className={`flex items-center gap-0.5 ${accuracy >= 90 ? 'text-emerald-600 font-bold' : ''}`}><CheckCircle size={10}/> {accuracy}%</span>
-                            </div>
-                          </td>
-                          <td className="p-3 text-center font-mono text-slate-500 hidden sm:table-cell">
-                            {entry.duration ? formatTime(entry.duration) : '--:--'}
-                          </td>
-                          <td className="p-3 text-center font-mono text-slate-500 hidden sm:table-cell">
-                             <span className={`${accuracy >= 90 ? 'text-emerald-500 font-bold' : ''}`}>{accuracy}%</span>
-                          </td>
-                          <td className="p-3 text-right font-mono text-indigo-600 font-bold">{entry.score}</td>
-                        </tr>
-                      );
-                    })}
+                    {leaderboardData.map((entry, index) => (
+                      <tr key={index} className={me(entry) ? 'bg-indigo-50' : ''}>
+                        <td className="p-3 font-mono text-slate-400 font-bold">{index + 1}</td>
+                        <td className="p-3 font-bold text-slate-700">
+                          {entry.name}
+                          <span className="ml-1 text-xs font-normal text-slate-400">{entry.cls}{entry.seat ? `-${entry.seat}` : ''}</span>
+                          <div className="sm:hidden text-xs text-slate-400 font-normal mt-1 flex items-center gap-2">
+                            <span className="flex items-center gap-0.5"><Clock size={10}/> {formatTime(entry.duration)}</span>
+                            <span className={`flex items-center gap-0.5 ${entry.accuracy >= 90 ? 'text-emerald-600 font-bold' : ''}`}><CheckCircle size={10}/> {entry.accuracy}%</span>
+                          </div>
+                        </td>
+                        <td className="p-3 text-center font-mono text-slate-500 hidden sm:table-cell">{formatTime(entry.duration)}</td>
+                        <td className="p-3 text-center font-mono text-slate-500 hidden sm:table-cell">
+                           <span className={entry.accuracy >= 90 ? 'text-emerald-500 font-bold' : ''}>{entry.accuracy}%</span>
+                        </td>
+                        <td className="p-3 text-right font-mono text-indigo-600 font-bold">{entry.score}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
@@ -747,20 +687,36 @@
                  </div>
                </div>
                <h1 className="text-2xl font-bold text-slate-800 mb-2">歡迎來到因式分解大師</h1>
-               <p className="text-slate-500 mb-6">請輸入你的姓名或暱稱以開始遊戲</p>
+               <p className="text-slate-500 mb-6">填好班級、座號和姓名就可以開始</p>
                
+               <div className="grid grid-cols-2 gap-3 mb-3">
+                 <input
+                   type="text" inputMode="numeric" maxLength={10}
+                   value={playerClass}
+                   onChange={(e) => setPlayerClass(e.target.value)}
+                   placeholder="班級（如 801）"
+                   className="w-full bg-slate-100 border-2 border-slate-200 rounded-xl p-3 text-center font-bold focus:border-indigo-500 focus:outline-none"
+                 />
+                 <input
+                   type="text" inputMode="numeric" maxLength={5}
+                   value={playerSeat}
+                   onChange={(e) => setPlayerSeat(e.target.value)}
+                   placeholder="座號"
+                   className="w-full bg-slate-100 border-2 border-slate-200 rounded-xl p-3 text-center font-bold focus:border-indigo-500 focus:outline-none"
+                 />
+               </div>
                <input 
-                 type="text" 
+                 type="text" maxLength={20}
                  value={playerName}
                  onChange={(e) => setPlayerName(e.target.value)}
-                 placeholder="輸入姓名..."
+                 placeholder="姓名"
                  className="w-full bg-slate-100 border-2 border-slate-200 rounded-xl p-4 text-center font-bold text-lg focus:border-indigo-500 focus:outline-none mb-4"
                  onKeyDown={(e) => e.key === 'Enter' && handleNameSubmit()}
                />
                
                <button 
                  onClick={handleNameSubmit}
-                 disabled={!playerName.trim()}
+                 disabled={!canEnter}
                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-200 transition-all flex justify-center items-center gap-2"
                >
                  開始挑戰 <ArrowRight size={20} />
@@ -777,7 +733,7 @@
             <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl max-w-md w-full text-center border-b-8 border-indigo-100 relative">
               
               <button onClick={() => setGameState('login')} className="absolute top-4 right-4 text-xs bg-slate-100 px-2 py-1 rounded text-slate-500">
-                 更換名字: {playerName}
+                 {playerClass}-{playerSeat} {playerName}（更換）
               </button>
 
               <div className="flex justify-center mb-4 mt-2">
@@ -876,7 +832,9 @@
                <p className="text-slate-500 mb-2">
                  {gameMode === 'timeAttack' ? '時間到！手速真快！' : gameMode === 'survival' ? '生命值耗盡，下次加油！' : '成績已結算！'}
                </p>
-               {isUploading && <p className="text-xs text-indigo-500 mb-4 animate-pulse">正在上傳成績...</p>}
+               {uploadStatus === 'uploading' && <p className="text-xs text-indigo-500 mb-4 animate-pulse">正在記錄成績…</p>}
+               {uploadStatus === 'done' && <p className="text-xs text-emerald-600 mb-4">✓ 成績已記錄</p>}
+               {uploadStatus === 'failed' && <p className="text-xs text-rose-500 mb-4">成績記錄失敗，請告訴老師</p>}
                
                <div className="text-5xl font-bold text-indigo-600 mb-6">{score} <span className="text-base text-slate-400 font-normal">pts</span></div>
 
@@ -1058,7 +1016,7 @@
                    <div className="mt-6 pt-6 border-t border-dashed border-slate-200 animate-slide-down">
                      <div className="flex justify-center items-center font-mono text-lg text-slate-600 bg-slate-50 p-6 rounded-xl relative">
                         <div className="relative grid grid-cols-2 gap-x-12 gap-y-6 z-10">
-                           <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a1 === 1 ? '' : problem.factors.a1}x</div>
+                           <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a1 === 1 ? '' : problem.factors.a1 === -1 ? '-' : problem.factors.a1}x</div>
                            <div className="text-left font-bold text-emerald-600 text-xl">{problem.factors.b1 > 0 ? `+${problem.factors.b1}` : problem.factors.b1}</div>
                            <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a2 === 1 ? '' : problem.factors.a2}x</div>
                            <div className="text-left font-bold text-emerald-600 text-xl">{problem.factors.b2 > 0 ? `+${problem.factors.b2}` : problem.factors.b2}</div>
@@ -1071,7 +1029,7 @@
                      <div className="mt-4 text-center">
                        <div className="text-sm font-bold text-slate-700">驗算中間項：</div>
                        <div className="font-mono text-sm text-slate-500 mt-1">
-                         ({problem.factors.a1}x · {problem.factors.b2}) + ({problem.factors.a2}x · {problem.factors.b1}) = <span className="text-indigo-600 font-bold">{problem.B}x</span>
+                         ({problem.factors.a1}x)·({problem.factors.b2}) + ({problem.factors.a2}x)·({problem.factors.b1}) = <span className="text-indigo-600 font-bold">{problem.B}x</span>
                        </div>
                      </div>
                    </div>
