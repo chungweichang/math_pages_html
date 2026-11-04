@@ -6,17 +6,17 @@
   <title>費馬點探究：從實驗到證明</title>
   
   <!-- 引入 Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   
   <!-- 引入 React 與 ReactDOM -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   
   <!-- 引入 Babel 進行即時編譯 -->
   <script crossorigin src="https://unpkg.com/@babel/standalone@7.23.0/babel.min.js"></script>
 
   <!-- 引入 Lucide 圖示庫 -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.469.0"></script>
 
   <!-- 補充原專案依賴的自訂動畫效果 -->
   <style>
@@ -36,7 +36,7 @@
     .touch-none { touch-action: none; }
   </style>
 </head>
-<body class="bg-slate-200 min-h-screen flex items-center justify-center py-8">
+<body class="bg-slate-200 min-h-screen flex items-start lg:items-center justify-center lg:py-8">
   <div id="root" class="w-full"></div>
 
   <script type="text/babel">
@@ -147,13 +147,16 @@
       const [lastPanPoint, setLastPanPoint] = useState({ x: 0, y: 0 });
 
       // 幾何資料
+      // 所有幾何座標都在 800 × 600 的「世界座標」裡，再依畫面大小自動縮放置中
+      const WORLD = { w: 800, h: 600 };
       const defaultVertices = {
-        A: { x: 400, y: 150 }, 
-        B: { x: 300, y: 400 },
-        C: { x: 600, y: 400 },
+        A: { x: 380, y: 130 },
+        B: { x: 220, y: 440 },
+        C: { x: 600, y: 440 },
       };
+      const defaultP = { x: 430, y: 330 };
       const [vertices, setVertices] = useState(defaultVertices);
-      const [pPoint, setPPoint] = useState({ x: 450, y: 300 });
+      const [pPoint, setPPoint] = useState(defaultP);
       
       // Step 5 專用：角 A 度數控制
       const [angleAValue, setAngleAValue] = useState(130);
@@ -165,6 +168,7 @@
       const [dataRecords, setDataRecords] = useState([]); 
       const [hasFoundOptimal, setHasFoundOptimal] = useState(false); 
       const [recordWarning, setRecordWarning] = useState('');
+      const [dragWarning, setDragWarning] = useState('');
 
       // 後續步驟控制
       const [rotationAngle, setRotationAngle] = useState(0); 
@@ -237,25 +241,38 @@
           }
         };
         updateSize();
-        window.addEventListener('resize', updateSize);
-        return () => window.removeEventListener('resize', updateSize);
+        const ro = new ResizeObserver(updateSize);
+        if (containerRef.current) ro.observe(containerRef.current);
+        return () => ro.disconnect();
       }, []);
 
+      const fitView = () => {
+        const s = Math.min(size.width / WORLD.w, size.height / WORLD.h);
+        setScale(s);
+        setOffset({ x: (size.width - WORLD.w * s) / 2, y: (size.height - WORLD.h * s) / 2 });
+      };
+      useEffect(() => { fitView(); }, [size]);
+
+      // 以畫面中心為基準縮放
+      const zoomBy = (factor) => {
+        const base = Math.min(size.width / WORLD.w, size.height / WORLD.h);
+        const next = Math.max(base * 0.5, Math.min(base * 3, scale * factor));
+        const cx = size.width / 2, cy = size.height / 2;
+        setOffset(o => ({ x: cx - (cx - o.x) * next / scale, y: cy - (cy - o.y) * next / scale }));
+        setScale(next);
+      };
+
       const handleReset = () => {
-          const cx = size.width / 2;
-          const cy = size.height / 2;
+          const cx = WORLD.w / 2;
+          const cy = WORLD.h / 2;
           
           if (step === 5) {
               updateObtuseTriangle(130, cx, cy);
               setAngleAValue(130);
               setShowObtuseProof(false);
           } else {
-              setVertices({
-                  A: { x: cx, y: cy - 150 },
-                  B: { x: cx - 100, y: cy + 100 },
-                  C: { x: cx + 150, y: cy + 100 },
-              });
-              setPPoint({x: cx + 20, y: cy + 20});
+              setVertices(defaultVertices);
+              setPPoint(defaultP);
               setStep(1); 
               setMaxStepReached(1);
               setDataRecords([]);
@@ -265,10 +282,10 @@
           setIsDragging(null); 
           setRotationAngle(0); 
           setPivot('C');
-          setScale(1);
-          setOffset({x:0, y:0});
+          fitView();
           setConstructionStep(0);
           setRecordWarning('');
+          setDragWarning('');
       };
 
       const updateObtuseTriangle = (angleDeg, cx, cy) => {
@@ -288,20 +305,19 @@
 
       useEffect(() => {
           if (step === 5) {
-              const cx = size.width / 2;
-              const cy = size.height / 2;
-              updateObtuseTriangle(130, cx, cy);
+              updateObtuseTriangle(130, WORLD.w / 2, WORLD.h / 2);
               setAngleAValue(130);
               setShowObtuseProof(false);
+          } else if (step < 4) {
+              // 第 1~3 步固定使用同一個銳角三角形，讓記錄的數據可以互相比較
+              setVertices(defaultVertices);
           }
-      }, [step, size]); 
+      }, [step]); 
 
       const handleAngleChange = (e) => {
           const deg = parseInt(e.target.value);
           setAngleAValue(deg);
-          const cx = size.width / 2;
-          const cy = size.height / 2;
-          updateObtuseTriangle(deg, cx, cy);
+          updateObtuseTriangle(deg, WORLD.w / 2, WORLD.h / 2);
       };
 
       const recordData = () => {
@@ -346,10 +362,12 @@
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         
-        canvas.width = size.width;
-        canvas.height = size.height;
-
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(size.width * dpr);
+        canvas.height = Math.round(size.height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size.width, size.height);
+        const px = 1 / scale; // 1 個螢幕像素在世界座標中的長度：讓線寬、點、字不隨縮放變大變小
         
         ctx.save();
         ctx.translate(offset.x, offset.y);
@@ -357,13 +375,13 @@
 
         const drawLine = (p1, p2, color='#94a3b8', width=1, dash=[]) => {
           ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-          ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash); ctx.stroke(); ctx.setLineDash([]);
+          ctx.strokeStyle = color; ctx.lineWidth = width * px; ctx.setLineDash(dash.map(d => d * px)); ctx.stroke(); ctx.setLineDash([]);
         };
         const drawDot = (p, color, r=5) => {
-          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fillStyle = color; ctx.fill();
+          ctx.beginPath(); ctx.arc(p.x, p.y, r * px, 0, Math.PI*2); ctx.fillStyle = color; ctx.fill();
         };
         const drawText = (txt, p, offset={x:0,y:0}, color='#334155', font='14px sans-serif') => {
-          ctx.fillStyle = color; ctx.font = font; ctx.fillText(txt, p.x+offset.x, p.y+offset.y);
+          ctx.fillStyle = color; ctx.font = font.replace(/([\d.]+)px/, (m, n) => (n * px) + 'px'); ctx.fillText(txt, p.x + offset.x * px, p.y + offset.y * px);
         };
 
         const { A, B, C } = vertices;
@@ -419,11 +437,11 @@
 
             const startNode = fixedPt1; 
             ctx.beginPath(); ctx.moveTo(startNode.x, startNode.y); ctx.lineTo(pPoint.x, pPoint.y);
-            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * px; ctx.stroke();
             ctx.beginPath(); ctx.moveTo(pPoint.x, pPoint.y); ctx.lineTo(rotPt2.x, rotPt2.y);
-            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * px; ctx.stroke();
             ctx.beginPath(); ctx.moveTo(rotPt2.x, rotPt2.y); ctx.lineTo(rotPt1.x, rotPt1.y);
-            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * px; ctx.stroke();
             
             if (rotDeg === 60) {
                 drawLine(center, rotPt1, '#ea580c', 1, [2,2]); 
@@ -432,14 +450,14 @@
 
         // Step 4
         if (step === 4) {
-            const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2,2]); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]); };
+            const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2 * px, 2 * px]); ctx.lineWidth = 1 * px; ctx.stroke(); ctx.setLineDash([]); };
             
             const drawRotationTrace = (center, start, end) => {
                 const angleStart = Math.atan2(start.y - center.y, start.x - center.x);
                 const angleEnd = Math.atan2(end.y - center.y, end.x - center.x);
                 ctx.beginPath();
                 ctx.arc(center.x, center.y, dist(center, start), angleStart, angleEnd, Math.abs(angleStart - angleEnd) > Math.PI ? angleStart < angleEnd : angleStart > angleEnd); 
-                ctx.strokeStyle = '#3b82f6'; ctx.setLineDash([4,4]); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
+                ctx.strokeStyle = '#3b82f6'; ctx.setLineDash([4 * px, 4 * px]); ctx.lineWidth = 1 * px; ctx.stroke(); ctx.setLineDash([]);
             };
 
             const drawRotatedTriangle = (origin, center, targetEqVertex) => {
@@ -493,7 +511,7 @@
             if (isogonicCenter) {
                 drawDot(isogonicCenter, '#9ca3af', 4);
                 drawText("O", isogonicCenter, {x:10,y:0}, '#9ca3af');
-                ctx.setLineDash([4,4]);
+                ctx.setLineDash([4 * px, 4 * px]);
                 drawLine(A, isogonicCenter, '#cbd5e1');
                 drawLine(B, isogonicCenter, '#cbd5e1');
                 drawLine(C, isogonicCenter, '#cbd5e1');
@@ -510,7 +528,7 @@
             if (showObtuseProof) {
                 const targetPt = A_prime; 
                 const startNode = B;
-                const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2,2]); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]); };
+                const drawPoly = (pts, color) => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p=>ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=color.replace('0.1','1'); ctx.setLineDash([2 * px, 2 * px]); ctx.lineWidth = 1 * px; ctx.stroke(); ctx.setLineDash([]); };
                 drawPoly([A, C, A_prime], 'rgba(16, 185, 129, 0.1)'); 
                 drawDot(A_prime, '#059669', 3); drawText("A'", A_prime, {x:5,y:5}, '#059669');
 
@@ -530,11 +548,11 @@
                 ctx.fillStyle = 'rgba(249, 115, 22, 0.2)'; ctx.fill();
 
                 ctx.beginPath(); ctx.moveTo(startNode.x, startNode.y); ctx.lineTo(pPoint.x, pPoint.y);
-                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2 * px; ctx.stroke();
                 ctx.beginPath(); ctx.moveTo(pPoint.x, pPoint.y); ctx.lineTo(pRot.x, pRot.y);
-                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2 * px; ctx.stroke();
                 ctx.beginPath(); ctx.moveTo(pRot.x, pRot.y); ctx.lineTo(targetPt.x, targetPt.y);
-                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2 * px; ctx.stroke();
             }
         }
 
@@ -550,8 +568,8 @@
 
         let hitTarget = null;
 
-        const allowVertexDrag = step !== 5; 
-        const allowPDrag = true; 
+        const allowVertexDrag = step === 4; // 第 1~3 步固定三角形；第 5 步改用角度滑桿
+        const allowPDrag = step !== 4; // 第 4 步畫面上沒有 P 點
 
         if (allowPDrag && dist(worldPt, pPoint) < 30 / scale) hitTarget = 'P';
         else if (allowVertexDrag) {
@@ -588,13 +606,26 @@
         if(isDragging === 'P') {
             setPPoint({x: worldPt.x, y: worldPt.y});
         } else {
-            setVertices(v => ({...v, [isDragging]:{x: worldPt.x, y: worldPt.y}}));
+            const next = { ...vertices, [isDragging]: { x: worldPt.x, y: worldPt.y } };
+            const { A, B, C } = next;
+            const angs = [getAngle(B, A, C), getAngle(A, B, C), getAngle(A, C, B)];
+            const cross = (B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x);
+            const minSide = Math.min(dist(A, B), dist(B, C), dist(C, A));
+            if (Math.max(...angs) >= 118) {
+                setDragWarning('三個內角都要小於 120°（大於等於 120° 的情形在第 5 步討論）');
+            } else if (cross >= 0 || minSide < 60 || Math.min(...angs) < 8) {
+                setDragWarning('三角形不能翻面或壓得太扁');
+            } else {
+                setDragWarning('');
+                setVertices(next);
+            }
         }
       };
       
       const handleMouseUp = () => {
         setIsDragging(null);
         setIsPanning(false);
+        setDragWarning('');
       };
 
       const handleTouchStart = (e) => {
@@ -627,10 +658,10 @@
       );
 
       return (
-        <div className="flex flex-col items-center bg-slate-50 p-6 rounded-xl shadow-lg w-full max-w-6xl mx-auto font-sans">
+        <div className="flex flex-col items-center bg-slate-50 p-3 md:p-6 lg:rounded-xl shadow-lg w-full max-w-6xl mx-auto font-sans">
           <div className="w-full mb-4">
               <a href="./" className="inline-block text-sm font-semibold text-slate-500 hover:text-blue-600 mb-2">← 回作品集</a>
-              <h2 className="text-2xl font-bold text-slate-800 text-center mb-4">費馬點探究：從實驗到證明</h2>
+              <h2 className="text-xl md:text-2xl font-bold text-slate-800 text-center mb-4">費馬點探究：從實驗到證明</h2>
               <div className="flex justify-between relative mb-2 px-2 overflow-x-auto">
                   <StepButton num={1} title="實驗數據" />
                   <StepButton num={2} title="旋轉實驗" />
@@ -643,8 +674,8 @@
               </div>
           </div>
 
-          <div className="flex w-full gap-4 h-[550px]">
-              <div ref={containerRef} className="relative border-2 border-slate-200 rounded-lg overflow-hidden bg-white shadow-inner cursor-crosshair touch-none flex-1">
+          <div className="flex flex-col lg:flex-row w-full gap-4 lg:h-[600px]">
+              <div ref={containerRef} className="relative border-2 border-slate-200 rounded-lg overflow-hidden bg-white shadow-inner cursor-crosshair touch-none h-[58vh] min-h-[340px] lg:h-auto lg:flex-1">
                 <canvas 
                     ref={canvasRef}
                     style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
@@ -674,15 +705,21 @@
 
                 <div className="absolute bottom-4 right-4 flex flex-col gap-2 bg-white/90 p-2 rounded-lg shadow border border-slate-200 pointer-events-none">
                     <div className="pointer-events-auto flex flex-col gap-2">
-                        <button onClick={()=>setScale(s=>Math.min(s*1.2, 3))} className="p-1 hover:bg-slate-100 rounded"><ZoomIn size={20}/></button>
-                        <button onClick={()=>setScale(s=>Math.max(s/1.2, 0.5))} className="p-1 hover:bg-slate-100 rounded"><ZoomOut size={20}/></button>
-                        <button onClick={()=>{setScale(1); setOffset({x:0,y:0})}} className="p-1 hover:bg-slate-100 rounded"><RefreshCw size={20}/></button>
+                        <button onClick={()=>zoomBy(1.2)} className="p-1.5 hover:bg-slate-100 rounded" aria-label="放大"><ZoomIn size={20}/></button>
+                        <button onClick={()=>zoomBy(1/1.2)} className="p-1.5 hover:bg-slate-100 rounded" aria-label="縮小"><ZoomOut size={20}/></button>
+                        <button onClick={fitView} className="p-1.5 hover:bg-slate-100 rounded" aria-label="重置視角"><RefreshCw size={20}/></button>
                     </div>
                     <div className="p-1 text-slate-400 flex justify-center"><Move size={20}/></div>
                 </div>
 
+                {dragWarning && (
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-amber-100 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-full text-xs font-bold shadow pointer-events-none whitespace-nowrap max-w-[95%] overflow-hidden text-ellipsis">
+                        {dragWarning}
+                    </div>
+                )}
+
                 {(step === 2 || step === 3) && (
-                    <div className="absolute top-4 left-4 bg-white/95 backdrop-blur p-4 rounded-lg shadow-lg border border-blue-100 max-w-xs animate-in fade-in slide-in-from-left-2 pointer-events-none">
+                    <div className="absolute top-4 left-4 bg-white/95 backdrop-blur p-4 rounded-lg shadow-lg border border-blue-100 max-w-xs animate-in fade-in slide-in-from-left-2 pointer-events-none hidden lg:block">
                         <div className="pointer-events-auto">
                             <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><RotateCcw size={16}/> 旋轉說明 (中心: {pivot})</h4>
                             <div className="text-sm text-slate-700 space-y-2">
@@ -698,7 +735,7 @@
                     </div>
                 )}
 
-                <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-lg border border-slate-200 shadow text-sm font-mono text-slate-700 min-w-[180px] pointer-events-none">
+                <div className="absolute top-2 right-2 lg:top-4 lg:right-4 bg-white/95 backdrop-blur p-2 lg:p-3 rounded-lg border border-slate-200 shadow text-xs lg:text-sm font-mono text-slate-700 min-w-[150px] lg:min-w-[180px] pointer-events-none">
                      <div className="flex justify-between mb-1">
                          <span>目前總和:</span> 
                          <span className={`font-bold ${isOptimal?'text-green-600':'text-blue-600'}`}>{currentSum.toFixed(3)}</span>
@@ -710,7 +747,7 @@
                 </div>
               </div>
 
-              <div className="w-80 flex flex-col gap-4">
+              <div className="w-full lg:w-80 flex flex-col gap-4">
                   
                   {step === 1 && (
                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col h-full animate-in slide-in-from-right-4">
@@ -729,7 +766,7 @@
                              <p className="text-xs text-slate-500">請透過移動 P 點收集這兩種數據，觀察角度變化。</p>
                          </div>
 
-                         <div className="flex-1 overflow-y-auto space-y-2 pr-1 border-t border-b border-slate-200 py-2 mb-2 bg-white rounded-md">
+                         <div className="flex-1 overflow-y-auto max-h-60 lg:max-h-none space-y-2 pr-1 border-t border-b border-slate-200 py-2 mb-2 bg-white rounded-md">
                              <div className="grid grid-cols-4 text-xs font-bold text-slate-500 px-2 pb-1 border-b">
                                  <span>總和</span>
                                  <span className="text-center">誤差</span>
@@ -813,6 +850,10 @@
                                           試著旋轉三角形，觀察邊長關係。
                                       </p>
                                   )}
+                                  <div className="lg:hidden text-sm text-slate-700 bg-blue-50 border border-blue-100 rounded p-3 space-y-1">
+                                      <p>將 <span className="font-bold text-orange-600">△{pivot === 'C' ? 'APC' : pivot === 'B' ? 'BPC' : 'APB'}</span> 繞 {pivot} 點旋轉 {step===3?60:rotationAngle}°。</p>
+                                      {step === 3 && <p className="font-bold text-blue-800">拖動 P 點：當藍色折線變成什麼形狀時，總和會最小？</p>}
+                                  </div>
                               </div>
                           </div>
 
@@ -885,7 +926,7 @@
                                       <p className="mb-2 text-slate-600">最後，在 <span className="font-bold text-orange-600">AB</span> 邊外作正三角形。</p>
                                       <p className="mb-2 font-bold text-purple-800 bg-white p-2 rounded border border-purple-200">
                                           關鍵探究：<br/>
-                                          請試著拖動三角形頂點。<br/>
+                                          請試著拖動三角形頂點（三個角都保持小於 120°）。<br/>
                                           你覺得連線 CB' 會經過交點 O 嗎？
                                       </p>
                                       <button 

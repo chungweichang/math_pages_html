@@ -3,509 +3,495 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>螺旋座標規律探究 (資優教學版)</title>
-  
-  <!-- 引入 Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- 引入 React 與 ReactDOM -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  
-  <!-- 引入 Babel 讓瀏覽器即時編譯 JSX -->
+  <title>螺旋機器人：座標規律探究</title>
+
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/@babel/standalone@7.23.0/babel.min.js"></script>
 
-  <!-- 引入 Lucide 圖示庫 -->
-  <script src="https://unpkg.com/lucide@latest"></script>
-
   <style>
-    /* 確保畫布區域不出現預期外的捲軸 */
-    body { overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+    canvas { touch-action: none; }
   </style>
 </head>
-<body>
+<body class="bg-slate-50">
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useCallback } = React;
 
     // ==========================================
-    // Lucide Icon 橋接器
+    // 螺旋座標的數學
     // ==========================================
-    const createIcon = (iconName) => ({ size = 24, className = "" }) => {
-      const ref = useRef(null);
-      useEffect(() => {
-        if (ref.current && window.lucide && window.lucide.icons[iconName]) {
-          ref.current.innerHTML = '';
-          const svg = window.lucide.createElement(window.lucide.icons[iconName]);
-          svg.setAttribute('width', size);
-          svg.setAttribute('height', size);
-          if (className) svg.setAttribute('class', className);
-          ref.current.appendChild(svg);
-        }
-      }, [size, className]);
-      return <span ref={ref} className={`inline-flex items-center justify-center ${className}`} />;
+    // 第 n 步的座標
+    const getCoords = (n) => {
+      if (n === 1) return { x: 0, y: 0 };
+      const k = Math.ceil((Math.sqrt(n) - 1) / 2);
+      const prevSquare = (2 * k - 1) ** 2;
+      const side = 2 * k;
+      let pos = n - prevSquare;
+      if (pos <= side) return { x: k, y: -(k - 1) + (pos - 1) };
+      pos -= side;
+      if (pos <= side) return { x: k - pos, y: k };
+      pos -= side;
+      if (pos <= side) return { x: -k, y: k - pos };
+      pos -= side;
+      if (pos <= side) return { x: -k + pos, y: -k };
+      return { x: k, y: -k };
     };
 
-    // 建立程式碼中會用到的所有圖示
-    const Play = createIcon('Play');
-    const Pause = createIcon('Pause');
-    const RotateCcw = createIcon('RotateCcw');
-    const Info = createIcon('Info');
-    const Search = createIcon('Search');
-    const Move = createIcon('Move');
-    const Zap = createIcon('Zap');
-    const Crosshair = createIcon('Crosshair');
-    const MousePointer2 = createIcon('MousePointer2');
+    // 座標 (x, y) 是第幾步
+    const getN = (x, y) => {
+      const k = Math.max(Math.abs(x), Math.abs(y));
+      if (k === 0) return 1;
+      const prevSquare = (2 * k - 1) ** 2;
+      const side = 2 * k;
+      if (x === k && y > -k) return prevSquare + (y + k);
+      if (y === k && x < k) return prevSquare + side + (k - x);
+      if (x === -k && y < k) return prevSquare + 2 * side + (k - y);
+      if (y === -k && x > -k) return prevSquare + 3 * side + (x + k);
+      return (2 * k + 1) ** 2;
+    };
+
+    // 路徑只在轉角轉彎，所以只要畫轉角就好（第 k 圈的 5 個轉折）
+    const cornersUpTo = (n) => {
+      const list = [1];
+      for (let k = 1; ; k++) {
+        const cs = [(2*k-1)**2 + 1, 4*k*k - 2*k + 1, 4*k*k + 1, 4*k*k + 2*k + 1, (2*k+1)**2];
+        for (const c of cs) { if (c > n) return list; list.push(c); }
+      }
+    };
+
+    const PATTERNS = {
+      topRight:    { label: '↗ 右上', quad: '第一象限', formula: '4k² − 2k + 1', at: (k) => ({ n: 4*k*k - 2*k + 1, x: k,  y: k  }) },
+      topLeft:     { label: '↖ 左上', quad: '第二象限', formula: '(2k)² + 1',    at: (k) => ({ n: 4*k*k + 1,         x: -k, y: k  }) },
+      bottomLeft:  { label: '↙ 左下', quad: '第三象限', formula: '4k² + 2k + 1', at: (k) => ({ n: 4*k*k + 2*k + 1,   x: -k, y: -k }) },
+      bottomRight: { label: '↘ 右下', quad: '第四象限', formula: '(2k + 1)²',    at: (k) => ({ n: (2*k+1)**2,        x: k,  y: -k }) },
+    };
+    const PATTERN_ORDER = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'];
+
+    const MAX_N = 1000000;
+    const clampN = (v) => Math.max(1, Math.min(MAX_N, v));
+    const fmtNum = (n) => n.toLocaleString('en-US');
 
     // ==========================================
-    // 螺旋座標核心應用程式
+    // 主程式
     // ==========================================
     const App = () => {
-      // 狀態管理
+      const [targetInput, setTargetInput] = useState('2025');
       const [targetN, setTargetN] = useState(2025);
       const [currentN, setCurrentN] = useState(1);
       const [isPlaying, setIsPlaying] = useState(false);
-      const [speed, setSpeed] = useState(100);
-      const [activePattern, setActivePattern] = useState('bottomRight'); // bottomRight, topLeft, topRight, bottomLeft, none
-      const [reverseX, setReverseX] = useState(0);
-      const [reverseY, setReverseY] = useState(0);
-      
-      // 畫布視角控制
-      const [pan, setPan] = useState({ x: 0, y: 0 });
-      const [zoom, setZoom] = useState(20); // 預設每單位 20px
-      const isDragging = useRef(false);
-      const lastMousePos = useRef({ x: 0, y: 0 });
-      
+      const [speedLevel, setSpeedLevel] = useState(4);       // 0~8，對應每秒步數
+      const [activePattern, setActivePattern] = useState('bottomRight');
+      const [showNumbers, setShowNumbers] = useState(true);
+      const [follow, setFollow] = useState(true);
+      const [reverseX, setReverseX] = useState('3');
+      const [reverseY, setReverseY] = useState('-2');
+      const [view, setView] = useState({ cx: 0, cy: 0, zoom: 32 }); // 畫面中心的數學座標、每單位幾 px
+      const [size, setSize] = useState({ w: 600, h: 400 });
+
+      const STEPS_PER_SEC = [2, 5, 10, 25, 60, 150, 400, 1200, 4000];
+      const stepsPerSec = STEPS_PER_SEC[speedLevel];
+
       const canvasRef = useRef(null);
+      const boxRef = useRef(null);
+      const viewRef = useRef(view);
+      viewRef.current = view;
 
-      // --- 核心數學邏輯 ---
-      const getCoords = (n) => {
-        if (n === 1) return { x: 0, y: 0 };
-        let k = Math.ceil((Math.sqrt(n) - 1) / 2);
-        let prevSquare = (k === 0) ? 0 : Math.pow(2 * k - 1, 2);
-        let side = 2 * k; 
-        let pos = n - prevSquare;
-        
-        if (pos <= side) return { x: k, y: -(k - 1) + (pos - 1) };
-        pos -= side;
-        if (pos <= side) return { x: k - pos, y: k };
-        pos -= side;
-        if (pos <= side) return { x: -k, y: k - pos };
-        pos -= side;
-        if (pos <= side) return { x: -k + pos, y: -k };
-        return { x: k, y: -k };
-      };
-
-      const getN = (x, y) => {
-        let k = Math.max(Math.abs(x), Math.abs(y));
-        if (k === 0) return 1;
-        let prevSquare = Math.pow(2 * k - 1, 2);
-        let side = 2 * k;
-        if (x === k && y > -k) return prevSquare + (y - (-(k - 1)) + 1);
-        if (y === k && x < k) return prevSquare + side + (k - x);
-        if (x === -k && y < k) return prevSquare + 2 * side + (k - y);
-        if (y === -k && x > -k) return prevSquare + 3 * side + (x - (-k));
-        return Math.pow(2 * k + 1, 2);
-      };
-
-      const getPatternPoints = (type, limitK = 100) => {
-        const points = [];
-        for(let k=1; k<=limitK; k++) {
-          if (type === 'bottomRight') points.push({ n: Math.pow(2*k+1, 2), x: k, y: -k });
-          if (type === 'topLeft') points.push({ n: Math.pow(2*k, 2) + 1, x: -k, y: k });
-          if (type === 'topRight') points.push({ n: 4*k*k - 2*k + 1, x: k, y: k });
-          if (type === 'bottomLeft') points.push({ n: 4*k*k + 2*k + 1, x: -k, y: -k });
-        }
-        return points;
-      };
-
-      // --- 畫布互動事件 ---
+      // ---------- 畫布尺寸（跟著容器、支援高解析螢幕） ----------
       useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
-        const handleWheel = (e) => {
-          e.preventDefault(); // 防止頁面滾動
-          setZoom(prev => Math.max(2, Math.min(100, prev - e.deltaY * 0.02)));
-        };
-
-        canvas.addEventListener('wheel', handleWheel, { passive: false });
-        return () => canvas.removeEventListener('wheel', handleWheel);
+        const el = boxRef.current;
+        const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+        ro.observe(el);
+        return () => ro.disconnect();
       }, []);
 
-      const handleMouseDown = (e) => {
-        isDragging.current = true;
-        lastMousePos.current = { x: e.clientX, y: e.clientY };
-      };
+      const toScreen = (x, y, v = view) => ({ sx: size.w / 2 + (x - v.cx) * v.zoom, sy: size.h / 2 - (y - v.cy) * v.zoom });
 
-      const handleMouseMove = (e) => {
-        if (!isDragging.current) return;
-        const dx = e.clientX - lastMousePos.current.x;
-        const dy = e.clientY - lastMousePos.current.y;
-        setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
-        lastMousePos.current = { x: e.clientX, y: e.clientY };
-      };
+      // ---------- 拖曳、雙指縮放、滾輪 ----------
+      const pointers = useRef(new Map());
+      const pinchDist = useRef(null);
 
-      const handleMouseUpOrLeave = () => {
-        isDragging.current = false;
-      };
+      const zoomAt = useCallback((factor, sx, sy) => {
+        setView((v) => {
+          const z = Math.max(0.3, Math.min(120, v.zoom * factor));
+          const mx = v.cx + (sx - size.w / 2) / v.zoom;
+          const my = v.cy - (sy - size.h / 2) / v.zoom;
+          return { zoom: z, cx: mx - (sx - size.w / 2) / z, cy: my + (sy - size.h / 2) / z };
+        });
+      }, [size]);
 
-      // 聚焦到機器人
-      const focusOnRobot = () => {
-        const coords = getCoords(currentN);
-        setPan({ x: -coords.x * zoom, y: coords.y * zoom });
+      const localPt = (e) => {
+        const r = canvasRef.current.getBoundingClientRect();
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
       };
-      
-      // 回到原點
-      const resetCamera = () => {
-        setPan({ x: 0, y: 0 });
-        setZoom(20);
+      const onPointerDown = (e) => {
+        canvasRef.current.setPointerCapture(e.pointerId);
+        pointers.current.set(e.pointerId, localPt(e));
       };
+      const onPointerMove = (e) => {
+        const ps = pointers.current;
+        if (!ps.has(e.pointerId)) return;
+        const prev = ps.get(e.pointerId);
+        const cur = localPt(e);
+        ps.set(e.pointerId, cur);
+        if (ps.size === 1) {
+          setFollow(false);
+          setView((v) => ({ ...v, cx: v.cx - (cur.x - prev.x) / v.zoom, cy: v.cy + (cur.y - prev.y) / v.zoom }));
+        } else if (ps.size === 2) {
+          const [a, b] = [...ps.values()];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (pinchDist.current) zoomAt(d / pinchDist.current, (a.x + b.x) / 2, (a.y + b.y) / 2);
+          pinchDist.current = d;
+        }
+      };
+      const onPointerUp = (e) => {
+        pointers.current.delete(e.pointerId);
+        if (pointers.current.size < 2) pinchDist.current = null;
+      };
+      useEffect(() => {
+        const c = canvasRef.current;
+        const onWheel = (e) => {
+          e.preventDefault();
+          const r = c.getBoundingClientRect();
+          zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - r.left, e.clientY - r.top);
+        };
+        c.addEventListener('wheel', onWheel, { passive: false });
+        return () => c.removeEventListener('wheel', onWheel);
+      }, [zoomAt]);
 
-      // --- 繪製畫布 ---
+      // ---------- 行走動畫 ----------
+      useEffect(() => {
+        if (!isPlaying) return;
+        let raf, last = performance.now(), carry = 0;
+        const tick = (now) => {
+          carry += (now - last) / 1000 * stepsPerSec;
+          last = now;
+          const steps = Math.floor(carry);
+          if (steps > 0) {
+            carry -= steps;
+            setCurrentN((n) => {
+              if (n === targetN) return n;
+              return n < targetN ? Math.min(targetN, n + steps) : Math.max(targetN, n - steps);
+            });
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+      }, [isPlaying, stepsPerSec, targetN]);
+
+      useEffect(() => { if (isPlaying && currentN === targetN) setIsPlaying(false); }, [currentN, targetN, isPlaying]);
+
+      // 跟隨機器人：機器人快走出畫面時，把它拉回中間
+      useEffect(() => {
+        if (!follow) return;
+        const p = getCoords(currentN);
+        const { sx, sy } = toScreen(p.x, p.y, viewRef.current);
+        const m = 60;
+        if (sx < m || sx > size.w - m || sy < m || sy > size.h - m) {
+          setView((v) => ({ ...v, cx: p.x, cy: p.y }));
+        }
+      }, [currentN, follow, size]);
+
+      // ---------- 繪圖 ----------
       useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(size.w * dpr);
+        canvas.height = Math.round(size.h * dpr);
         const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-        
-        // 計算畫布中心的絕對座標
-        const cx = width / 2 + pan.x;
-        const cy = height / 2 + pan.y;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const { w, h } = size;
+        const { zoom } = view;
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(0, 0, w, h);
 
-        ctx.clearRect(0, 0, width, height);
+        const left = view.cx - w / 2 / zoom, right = view.cx + w / 2 / zoom;
+        const bottom = view.cy - h / 2 / zoom, top = view.cy + h / 2 / zoom;
+        const o = toScreen(0, 0);
 
-        // 計算當前視角可見的數學座標範圍
-        const leftEdge = Math.floor((-cx) / zoom);
-        const rightEdge = Math.ceil((width - cx) / zoom);
-        const bottomEdge = Math.floor((cy - height) / zoom);
-        const topEdge = Math.ceil(cy / zoom);
-
-        // --- 動態計算格線間距 (避免縮小後格線密密麻麻) ---
+        // 格線：間距至少約 48px
         let step = 1;
-        const minGridSpacingPx = 60; // 畫面上的格線之間至少保持 60px 的距離
-        while (step * zoom < minGridSpacingPx) {
-          if (step.toString().startsWith('1')) step *= 2;      // 1 -> 2, 10 -> 20, 100 -> 200
-          else if (step.toString().startsWith('2')) step *= 2.5; // 2 -> 5, 20 -> 50, 200 -> 500
-          else step *= 2;                                      // 5 -> 10, 50 -> 100
-        }
-
-        // 繪製網格與座標軸數字
-        ctx.strokeStyle = '#e2e8f0'; // 網格顏色
+        for (const m of [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]) { step = m; if (m * zoom >= 48) break; }
+        ctx.strokeStyle = '#e2e8f0';
         ctx.lineWidth = 1;
-        ctx.font = '10px Inter';
-        ctx.fillStyle = '#94a3b8';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        ctx.beginPath();
+        for (let x = Math.floor(left / step) * step; x <= right; x += step) { const s = toScreen(x, 0).sx; ctx.moveTo(s, 0); ctx.lineTo(s, h); }
+        for (let y = Math.floor(bottom / step) * step; y <= top; y += step) { const s = toScreen(0, y).sy; ctx.moveTo(0, s); ctx.lineTo(w, s); }
+        ctx.stroke();
 
-        const startX = Math.floor(leftEdge / step) * step;
-        for (let x = startX; x <= rightEdge; x += step) {
-          ctx.beginPath();
-          ctx.moveTo(cx + x * zoom, 0);
-          ctx.lineTo(cx + x * zoom, height);
-          ctx.stroke();
-          
-          // 在 X 軸上畫刻度數字 (避開原點)
-          if (x !== 0 && cy > 0 && cy < height) {
-            ctx.fillText(x.toString(), cx + x * zoom, cy + 12);
-          }
-        }
-
-        const startY = Math.floor(bottomEdge / step) * step;
-        for (let y = startY; y <= topEdge; y += step) {
-          ctx.beginPath();
-          ctx.moveTo(0, cy - y * zoom);
-          ctx.lineTo(width, cy - y * zoom);
-          ctx.stroke();
-          
-          // 在 Y 軸上畫刻度數字 (避開原點)
-          if (y !== 0 && cx > 0 && cx < width) {
-            ctx.textAlign = 'right';
-            ctx.fillText(y.toString(), cx - 8, cy - y * zoom);
-          }
-        }
-        ctx.textAlign = 'left'; // 恢復預設
-
-        // 繪製座標軸
+        // 座標軸
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(0, cy); ctx.lineTo(width, cy); // X 軸
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx, 0); ctx.lineTo(cx, height); // Y 軸
+        ctx.moveTo(0, o.sy); ctx.lineTo(w, o.sy);
+        ctx.moveTo(o.sx, 0); ctx.lineTo(o.sx, h);
         ctx.stroke();
 
-        // 繪製機器人走過的路徑 (優化：只畫目前縮放看得到或有意義的部分)
+        // 刻度數字（軸跑出畫面時，貼在邊緣）
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = '#64748b';
+        ctx.strokeStyle = 'rgba(248,250,252,0.95)';
+        ctx.lineWidth = 4;
+        const label = (t, x, y) => { ctx.strokeText(t, x, y); ctx.fillText(t, x, y); };
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const axisY = Math.min(Math.max(o.sy + 6, 4), h - 18);
+        for (let x = Math.floor(left / step) * step; x <= right; x += step) if (x !== 0) label(x, toScreen(x, 0).sx, axisY);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        const axisX = Math.min(Math.max(o.sx - 6, 30), w - 4);
+        for (let y = Math.floor(bottom / step) * step; y <= top; y += step) if (y !== 0) label(y, axisX, toScreen(0, y).sy);
+
+        // 走過的路徑（只畫轉角）
         ctx.strokeStyle = '#6366f1';
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = Math.max(1.5, Math.min(4, zoom * 0.1));
         ctx.lineJoin = 'round';
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        
-        for (let i = 1; i <= currentN; i++) {
-          const p = getCoords(i);
-          ctx.lineTo(cx + p.x * zoom, cy - p.y * zoom);
-        }
+        const corners = cornersUpTo(currentN);
+        corners.forEach((c, i) => { const p = getCoords(c); const s = toScreen(p.x, p.y); i ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
+        const cur = getCoords(currentN);
+        const cs = toScreen(cur.x, cur.y);
+        ctx.lineTo(cs.sx, cs.sy);
         ctx.stroke();
 
-        // 繪製轉折規律點
-        if (activePattern !== 'none') {
-          // 動態增加計算點的數量，確保拉遠時也看得到規律
-          const patternPoints = getPatternPoints(activePattern, Math.max(100, Math.ceil(Math.max(Math.abs(rightEdge), Math.abs(topEdge)))));
-          
-          // 計算當前縮放層級下，每隔幾個點顯示一次文字，避免文字重疊
-          const textSkip = Math.ceil(25 / zoom);
-
-          patternPoints.forEach((pt, index) => {
-            // 只畫在畫面內的點
-            if (pt.x >= leftEdge - 1 && pt.x <= rightEdge + 1 && pt.y >= bottomEdge - 1 && pt.y <= topEdge + 1) {
-              const dotRadius = Math.max(5, zoom * 0.2); // 確保縮小極限時，點的半徑至少有 5px
-              
-              ctx.fillStyle = '#f43f5e';
-              ctx.beginPath();
-              ctx.arc(cx + pt.x * zoom, cy - pt.y * zoom, dotRadius, 0, Math.PI * 2);
-              ctx.fill();
-              
-              // 動態決定是否顯示文字
-              if (index % textSkip === 0 || pt.n === targetN) {
-                const textX = cx + pt.x * zoom + dotRadius + 6;
-                const textY = cy - pt.y * zoom + 5;
-                
-                ctx.font = 'bold 13px Inter'; // 加大字體
-                // 畫文字白邊，增加在網格或線條上的辨識度
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-                ctx.lineWidth = 4;
-                ctx.strokeText(`A_${pt.n}`, textX, textY);
-                
-                ctx.fillStyle = '#be123c'; // 深紅文字
-                ctx.fillText(`A_${pt.n}`, textX, textY);
-              }
+        // 格點編號（放大時才顯示，只標走過的點）
+        if (showNumbers && zoom >= 44) {
+          ctx.font = `${Math.min(14, Math.round(zoom * 0.3))}px ui-monospace, monospace`;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'bottom';
+          ctx.fillStyle = '#475569';
+          for (let x = Math.ceil(left); x <= Math.floor(right); x++) {
+            for (let y = Math.ceil(bottom); y <= Math.floor(top); y++) {
+              const n = getN(x, y);
+              if (n > currentN) continue;
+              const s = toScreen(x, y);
+              ctx.beginPath(); ctx.arc(s.sx, s.sy, 2.5, 0, Math.PI * 2); ctx.fill();
+              ctx.fillText(n, s.sx + 4, s.sy - 2);
             }
-          });
-        }
-
-        // 繪製機器人本體
-        const lastP = getCoords(currentN);
-        const rX = cx + lastP.x * zoom;
-        const rY = cy - lastP.y * zoom;
-        
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        const robotSize = Math.max(12, zoom * 0.5); // 機器人大小隨縮放，但有最小值
-        ctx.roundRect(rX - robotSize/2, rY - robotSize/2, robotSize, robotSize, 4);
-        ctx.fill();
-        
-        // 機器人眼睛
-        ctx.fillStyle = '#22d3ee';
-        ctx.beginPath();
-        ctx.arc(rX - robotSize*0.2, rY - robotSize*0.1, robotSize*0.1, 0, Math.PI * 2);
-        ctx.arc(rX + robotSize*0.2, rY - robotSize*0.1, robotSize*0.1, 0, Math.PI * 2);
-        ctx.fill();
-
-      }, [currentN, activePattern, pan, zoom]);
-
-      // --- 動態播放邏輯 ---
-      useEffect(() => {
-        let timer;
-        if (isPlaying) {
-          if (currentN < targetN) {
-            timer = setTimeout(() => setCurrentN(prev => prev + 1), 1000 / speed);
-          } else if (currentN > targetN) {
-            timer = setTimeout(() => setCurrentN(prev => prev - 1), 1000 / speed);
-          } else {
-            setIsPlaying(false); // 抵達終點自動暫停
           }
         }
-        return () => clearTimeout(timer);
-      }, [isPlaying, currentN, targetN, speed]);
 
-      const togglePlayPause = () => setIsPlaying(!isPlaying);
+        // 轉角規律點
+        if (activePattern !== 'none') {
+          const pat = PATTERNS[activePattern];
+          const kMax = Math.ceil(Math.max(Math.abs(left), Math.abs(right), Math.abs(top), Math.abs(bottom))) + 1;
+          const r = Math.max(5, Math.min(9, zoom * 0.18));
+          const labelEvery = Math.max(1, Math.ceil(70 / zoom));
+          for (let k = 1; k <= kMax; k++) {
+            const pt = pat.at(k);
+            if (pt.x < left - 1 || pt.x > right + 1 || pt.y < bottom - 1 || pt.y > top + 1) continue;
+            const s = toScreen(pt.x, pt.y);
+            ctx.fillStyle = '#f43f5e';
+            ctx.beginPath(); ctx.arc(s.sx, s.sy, r, 0, Math.PI * 2); ctx.fill();
+            if (k % labelEvery === 0 || k <= 3) {
+              const tx = s.sx + r + 4, ty = s.sy;
+              ctx.textBaseline = 'middle';
+              ctx.textAlign = 'left';
+              ctx.lineWidth = 4;
+              ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+              ctx.font = 'bold 15px sans-serif';
+              ctx.strokeText('A', tx, ty); ctx.fillStyle = '#be123c'; ctx.fillText('A', tx, ty);
+              const aw = ctx.measureText('A').width;
+              ctx.font = 'bold 11px sans-serif';
+              ctx.strokeText(pt.n, tx + aw + 1, ty + 6); ctx.fillText(pt.n, tx + aw + 1, ty + 6);
+            }
+          }
+        }
 
-      const handleReverseSearchWalk = () => {
-        const x = parseInt(reverseX) || 0;
-        const y = parseInt(reverseY) || 0;
-        const foundN = getN(x, y);
-        setTargetN(foundN);
-        setIsPlaying(true);
+        // 機器人
+        const rs = Math.max(14, Math.min(28, zoom * 0.6));
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.roundRect(cs.sx - rs / 2, cs.sy - rs / 2, rs, rs, 4);
+        ctx.fill();
+        ctx.fillStyle = '#22d3ee';
+        ctx.beginPath();
+        ctx.arc(cs.sx - rs * 0.2, cs.sy - rs * 0.1, rs * 0.11, 0, Math.PI * 2);
+        ctx.arc(cs.sx + rs * 0.2, cs.sy - rs * 0.1, rs * 0.11, 0, Math.PI * 2);
+        ctx.fill();
+      }, [currentN, activePattern, view, size, showNumbers]);
+
+      // ---------- 操作 ----------
+      const applyTarget = () => {
+        const v = clampN(parseInt(targetInput) || 1);
+        setTargetInput(String(v));
+        setTargetN(v);
+        return v;
       };
-
-      const handleReverseSearchJump = () => {
-        const x = parseInt(reverseX) || 0;
-        const y = parseInt(reverseY) || 0;
-        const foundN = getN(x, y);
-        setTargetN(foundN);
-        setCurrentN(foundN);
+      const walkToTarget = () => {
+        if (isPlaying) { setIsPlaying(false); return; }
+        const v = applyTarget();
+        if (v !== currentN) { setFollow(true); setIsPlaying(true); }
+      };
+      const jumpToTarget = () => {
+        const v = applyTarget();
         setIsPlaying(false);
-        setPan({ x: -x * zoom, y: y * zoom }); // 視角切換過去
+        setCurrentN(v);
+        const p = getCoords(v);
+        setView((vw) => ({ ...vw, cx: p.x, cy: p.y }));
       };
+      const resetWalk = () => { setIsPlaying(false); setCurrentN(1); setView((v) => ({ ...v, cx: 0, cy: 0 })); };
 
-      const currentCoords = getCoords(currentN);
+      const reverseTarget = () => {
+        const x = parseInt(reverseX) || 0, y = parseInt(reverseY) || 0;
+        const n = clampN(getN(x, y));
+        setTargetN(n); setTargetInput(String(n));
+        return { n, x, y };
+      };
+      const reverseWalk = () => { const { n } = reverseTarget(); setFollow(true); setIsPlaying(n !== currentN); };
+      const reverseJump = () => { const { n, x, y } = reverseTarget(); setIsPlaying(false); setCurrentN(n); setView((v) => ({ ...v, cx: x, cy: y })); };
+
+      const centerOrigin = () => setView({ cx: 0, cy: 0, zoom: 32 });
+      const centerRobot = () => { const p = getCoords(currentN); setFollow(true); setView((v) => ({ ...v, cx: p.x, cy: p.y })); };
+
+      const cur = getCoords(currentN);
+      const pat = activePattern !== 'none' ? PATTERNS[activePattern] : null;
+
+      const btn = 'rounded-xl font-bold transition-colors active:scale-[0.98]';
+      const input = 'w-full border border-slate-300 rounded-xl px-3 py-2.5 text-base font-mono focus:ring-2 outline-none bg-white';
 
       return (
-        <div className="flex flex-col h-screen bg-slate-50 text-slate-900">
-          <header className="bg-white border-b px-6 py-4 flex justify-between items-center z-20 shadow-sm">
-            <div className="flex items-center gap-3">
-              <a href="./" className="text-sm font-semibold text-slate-500 hover:text-indigo-600 pr-3 border-r border-slate-200 whitespace-nowrap">← 作品集</a>
-              <div className="p-2 bg-indigo-600 rounded-lg text-white">
-                <Move size={24} />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-slate-800">螺旋座標規律探究 (資優教學版)</h1>
-                <p className="text-xs text-slate-500 font-medium">支援自由縮放視角與多維度轉折點分析</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-               <button onClick={resetCamera} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg flex items-center gap-1 font-semibold transition-colors">
-                  <Crosshair size={14} /> 原點置中
-               </button>
-               <button onClick={focusOnRobot} className="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-lg flex items-center gap-1 font-semibold transition-colors">
-                  <MousePointer2 size={14} /> 追蹤機器人
-               </button>
+        <div className="flex flex-col h-[100dvh] text-slate-900">
+          {/* 標題列 */}
+          <header className="bg-white border-b px-3 md:px-6 py-2.5 flex items-center gap-3 shadow-sm z-20 flex-none">
+            <a href="./" className="text-sm font-semibold text-slate-500 hover:text-indigo-600 pr-3 border-r border-slate-200 whitespace-nowrap">← 作品集</a>
+            <div className="min-w-0">
+              <h1 className="text-base md:text-xl font-bold text-slate-800 truncate">螺旋機器人：座標規律探究</h1>
+              <p className="text-xs text-slate-500 hidden md:block">機器人從原點出發，繞著方形螺旋一格一格往外走</p>
             </div>
           </header>
 
-          <main className="flex flex-1 overflow-hidden">
-            {/* 左側控制區域 */}
-            <aside className="w-96 bg-white border-r flex flex-col z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-              
-              <div className="p-5 flex-1 overflow-y-auto space-y-6">
-                {/* 第一區塊：正向探究 */}
-                <section className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                  <h2 className="flex items-center gap-2 font-bold text-indigo-700 mb-3">
-                    <span className="w-5 h-5 rounded flex items-center justify-center bg-indigo-100 text-xs">1</span>
-                    正向探索：輸入序號 n
-                  </h2>
-                  <div className="space-y-3">
-                    <input 
-                      type="number" 
-                      value={targetN}
-                      onChange={(e) => setTargetN(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
-                      placeholder="輸入目標 n"
-                    />
-                    <div className="grid grid-cols-4 gap-2">
-                      <button onClick={togglePlayPause} className={`col-span-3 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors ${isPlaying ? 'bg-amber-500 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                        {isPlaying ? <><Pause size={16} /> 暫停行走</> : <><Play size={16} /> 走到目標點</>}
-                      </button>
-                      <button onClick={() => { setCurrentN(1); setIsPlaying(false); }} className="bg-slate-200 text-slate-600 py-2 rounded-xl flex items-center justify-center hover:bg-slate-300">
-                        <RotateCcw size={16} />
-                      </button>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase">行走速度</label>
-                      </div>
-                      <input type="range" min="10" max="500" value={speed} onChange={(e) => setSpeed(parseInt(e.target.value))} className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer" />
-                    </div>
-                  </div>
-                </section>
-
-                {/* 第二區塊：逆向挑戰 */}
-                <section className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
-                  <h2 className="flex items-center gap-2 font-bold text-emerald-700 mb-3">
-                    <span className="w-5 h-5 rounded flex items-center justify-center bg-emerald-100 text-xs">2</span>
-                    逆向挑戰：尋找座標點
-                  </h2>
-                  <div className="grid grid-cols-2 gap-2 mb-3">
-                    <input type="number" value={reverseX} onChange={(e) => setReverseX(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-emerald-500 outline-none font-mono text-sm" placeholder="X 座標" />
-                    <input type="number" value={reverseY} onChange={(e) => setReverseY(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-emerald-500 outline-none font-mono text-sm" placeholder="Y 座標" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={handleReverseSearchWalk} className="bg-emerald-100 text-emerald-700 py-2 rounded-xl font-bold flex items-center justify-center gap-1 hover:bg-emerald-200 text-xs transition-colors">
-                      <Play size={14} /> 走過去
-                    </button>
-                    <button onClick={handleReverseSearchJump} className="bg-emerald-600 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-1 hover:bg-emerald-700 text-xs shadow-sm transition-colors">
-                      <Zap size={14} /> 瞬間閃現
-                    </button>
-                  </div>
-                </section>
-
-                {/* 第三區塊：轉折點規律 */}
-                <section>
-                  <h2 className="flex items-center gap-2 font-bold text-slate-700 mb-3 text-sm">
-                    📐 四象限轉折點規律標示
-                  </h2>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => setActivePattern('topLeft')} className={`py-2 px-2 text-xs font-bold rounded-lg border text-left transition-all ${activePattern === 'topLeft' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                      ↖ 左上 (第2象限) <br/><span className="font-mono text-[10px] font-normal opacity-80">(2k)² + 1</span>
-                    </button>
-                    <button onClick={() => setActivePattern('topRight')} className={`py-2 px-2 text-xs font-bold rounded-lg border text-left transition-all ${activePattern === 'topRight' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                      ↗ 右上 (第1象限) <br/><span className="font-mono text-[10px] font-normal opacity-80">4k² - 2k + 1</span>
-                    </button>
-                    <button onClick={() => setActivePattern('bottomLeft')} className={`py-2 px-2 text-xs font-bold rounded-lg border text-left transition-all ${activePattern === 'bottomLeft' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                      ↙ 左下 (第3象限) <br/><span className="font-mono text-[10px] font-normal opacity-80">4k² + 2k + 1</span>
-                    </button>
-                    <button onClick={() => setActivePattern('bottomRight')} className={`py-2 px-2 text-xs font-bold rounded-lg border text-left transition-all ${activePattern === 'bottomRight' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                      ↘ 右下 (第4象限) <br/><span className="font-mono text-[10px] font-normal opacity-80">(2k + 1)²</span>
-                    </button>
-                  </div>
-                  <button onClick={() => setActivePattern('none')} className="mt-2 w-full py-1.5 text-xs text-slate-400 hover:text-slate-600 transition-colors">
-                    關閉規律標示
-                  </button>
-                </section>
-              </div>
-              
-              {/* 教學說明視窗 */}
-              <div className="bg-slate-800 p-5 text-white">
-                <h3 className="text-indigo-300 font-bold flex items-center gap-2 mb-2 text-sm">
-                  <Info size={16} /> 資優班教學提問提示
-                </h3>
-                <p className="text-xs leading-relaxed text-slate-300 opacity-90 mb-2">
-                  「除了右下角的奇數平方，機器人在其他轉角處的座標與數字，是否也存在多項式規律呢？」
-                </p>
-                <div className="text-[10px] bg-slate-900/50 p-2 rounded font-mono text-emerald-300 space-y-1">
-                  {activePattern === 'bottomRight' && <p>目前標示：奇數平方 A_((2k+1)²) = (k, -k)</p>}
-                  {activePattern === 'topLeft' && <p>目前標示：偶數平方加一 A_((2k)²+1) = (-k, k)</p>}
-                  {activePattern === 'topRight' && <p>目前標示：A_(4k²-2k+1) = (k, k)</p>}
-                  {activePattern === 'bottomLeft' && <p>目前標示：A_(4k²+2k+1) = (-k, -k)</p>}
-                  {activePattern === 'none' && <p>請點擊上方按鈕開啟各象限規律點</p>}
-                </div>
-              </div>
-            </aside>
-
-            {/* 畫布顯示區 */}
-            <div className="flex-1 relative bg-[#e2e8f0] flex items-center justify-center overflow-hidden">
-              
-              {/* 操作提示浮水印 */}
-              <div className="absolute top-4 right-6 text-slate-400 text-xs font-medium z-10 pointer-events-none flex items-center gap-2 bg-white/50 px-3 py-1.5 rounded-full backdrop-blur">
-                <MousePointer2 size={12} /> 滑鼠拖曳平移畫布，滾輪縮放視野
-              </div>
-
-              {/* 狀態卡片 (跟隨在左上角) */}
-              <div className="absolute top-6 left-6 flex flex-col gap-3 z-10 pointer-events-none">
-                <div className="bg-white/90 backdrop-blur shadow-lg rounded-xl p-3 border border-slate-200 min-w-[140px]">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">目前序號 n</span>
-                  <span className="text-2xl font-black text-indigo-600 font-mono">A_{currentN}</span>
-                </div>
-                <div className="bg-white/90 backdrop-blur shadow-lg rounded-xl p-3 border border-slate-200 min-w-[140px]">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">所在座標 (X, Y)</span>
-                  <span className="text-xl font-black text-emerald-600 font-mono">({currentCoords.x}, {currentCoords.y})</span>
-                </div>
-              </div>
-
-              {/* 互動式畫布 */}
-              <canvas 
-                ref={canvasRef} 
-                width={2000} // 給予夠大的內部解析度
-                height={1500} 
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUpOrLeave}
-                onMouseLeave={handleMouseUpOrLeave}
+          <main className="flex flex-col md:flex-row flex-1 min-h-0">
+            {/* 畫布 */}
+            <div ref={boxRef} className="relative flex-none h-[52vh] md:h-auto md:flex-1 md:order-2 overflow-hidden border-b md:border-b-0 border-slate-200">
+              <canvas
+                ref={canvasRef}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
                 className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
               />
+
+              {/* 狀態卡 */}
+              <div className="absolute top-3 left-3 bg-white/95 backdrop-blur shadow-lg rounded-2xl border border-slate-200 px-4 py-3 pointer-events-none">
+                <div className="flex items-end gap-5">
+                  <div>
+                    <div className="text-xs font-bold text-slate-400 mb-0.5">第幾步</div>
+                    <div className="text-2xl md:text-4xl font-black text-indigo-600 font-mono leading-none">
+                      A<sub className="text-base md:text-xl">{currentN}</sub>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-400 mb-0.5">座標</div>
+                    <div className="text-2xl md:text-4xl font-black text-emerald-600 font-mono leading-none">({cur.x}, {cur.y})</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 視角按鈕 */}
+              <div className="absolute bottom-3 right-3 flex flex-col gap-2">
+                {[['＋', () => zoomAt(1.4, size.w / 2, size.h / 2), '放大'],
+                  ['－', () => zoomAt(1 / 1.4, size.w / 2, size.h / 2), '縮小'],
+                  ['⌂', centerOrigin, '回到原點'],
+                  ['◎', centerRobot, '找機器人']].map(([t, fn, title]) => (
+                  <button key={title} onClick={fn} title={title} aria-label={title}
+                    className="w-11 h-11 rounded-full bg-white/95 border border-slate-300 shadow text-lg font-bold text-slate-700 hover:bg-indigo-50 active:scale-95">
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <div className="absolute bottom-3 left-3 text-[11px] text-slate-500 bg-white/80 rounded-full px-2.5 py-1 pointer-events-none hidden sm:block">
+                拖曳平移・滾輪或雙指縮放・放大後可看到格點編號
+              </div>
             </div>
+
+            {/* 控制面板 */}
+            <aside className="flex-1 md:flex-none md:w-[380px] md:order-1 bg-white md:border-r overflow-y-auto">
+              <div className="p-4 md:p-5 space-y-5">
+
+                <section className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <h2 className="font-bold text-indigo-700 mb-3">① 輸入 n，看機器人走到哪</h2>
+                  <input type="number" inputMode="numeric" min="1" max={MAX_N} value={targetInput}
+                    onChange={(e) => setTargetInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && walkToTarget()}
+                    className={input + ' focus:ring-indigo-400 mb-2'} placeholder="例如 2025" />
+                  <div className="grid grid-cols-5 gap-2">
+                    <button onClick={walkToTarget} className={`${btn} col-span-2 py-2.5 text-white ${isPlaying ? 'bg-amber-500 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                      {isPlaying ? '❚❚ 暫停' : '▶ 走過去'}
+                    </button>
+                    <button onClick={jumpToTarget} className={`${btn} col-span-2 py-2.5 bg-indigo-100 text-indigo-700 hover:bg-indigo-200`}>⚡ 直接跳</button>
+                    <button onClick={resetWalk} title="回到起點" className={`${btn} py-2.5 bg-slate-200 text-slate-600 hover:bg-slate-300`}>↺</button>
+                  </div>
+                  <label className="block mt-3">
+                    <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
+                      <span>行走速度</span><span className="font-mono">每秒 {fmtNum(stepsPerSec)} 步</span>
+                    </div>
+                    <input type="range" min="0" max={STEPS_PER_SEC.length - 1} value={speedLevel}
+                      onChange={(e) => setSpeedLevel(parseInt(e.target.value))} className="w-full accent-indigo-600" />
+                  </label>
+                </section>
+
+                <section className="bg-emerald-50/60 p-4 rounded-2xl border border-emerald-100">
+                  <h2 className="font-bold text-emerald-700 mb-3">② 反過來：給座標，找出 n</h2>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <label className="text-xs font-bold text-slate-500">x
+                      <input type="number" inputMode="numeric" value={reverseX} onChange={(e) => setReverseX(e.target.value)} className={input + ' focus:ring-emerald-400 mt-1'} />
+                    </label>
+                    <label className="text-xs font-bold text-slate-500">y
+                      <input type="number" inputMode="numeric" value={reverseY} onChange={(e) => setReverseY(e.target.value)} className={input + ' focus:ring-emerald-400 mt-1'} />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={reverseWalk} className={`${btn} py-2.5 bg-emerald-100 text-emerald-800 hover:bg-emerald-200`}>▶ 走過去</button>
+                    <button onClick={reverseJump} className={`${btn} py-2.5 bg-emerald-600 text-white hover:bg-emerald-700`}>⚡ 直接跳</button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">先自己算算看是第幾步，再按按鈕驗證。</p>
+                </section>
+
+                <section>
+                  <h2 className="font-bold text-slate-700 mb-2">③ 四個轉角的規律</h2>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PATTERN_ORDER.map((key) => {
+                      const p = PATTERNS[key];
+                      const on = activePattern === key;
+                      return (
+                        <button key={key} onClick={() => setActivePattern(on ? 'none' : key)}
+                          className={`py-2.5 px-3 rounded-xl border text-left transition-all ${on ? 'bg-rose-50 border-rose-400 text-rose-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                          <div className="font-bold text-sm">{p.label}<span className="font-normal text-xs ml-1 opacity-70">{p.quad}</span></div>
+                          <div className="font-mono text-xs mt-0.5 opacity-80">{p.formula}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <label className="flex items-center gap-2 mt-3 text-sm text-slate-600">
+                    <input type="checkbox" checked={showNumbers} onChange={(e) => setShowNumbers(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
+                    放大時顯示走過格點的編號
+                  </label>
+                </section>
+
+                <section className="bg-slate-800 text-white rounded-2xl p-4">
+                  <h3 className="text-indigo-300 font-bold text-sm mb-2">想一想</h3>
+                  <p className="text-sm leading-relaxed text-slate-200">
+                    右下角的轉角都是奇數的平方。其他三個轉角的數字，是不是也能寫成 k 的式子？
+                  </p>
+                  <div className="text-xs bg-slate-900/60 p-2 rounded mt-2 font-mono text-emerald-300">
+                    {pat ? <>目前標示：A<sub>{pat.formula}</sub> 落在 ({pat.at(1).x > 0 ? 'k' : '−k'}, {pat.at(1).y > 0 ? 'k' : '−k'})</> : '點上方按鈕，標示某一個轉角的所有點'}
+                  </div>
+                </section>
+              </div>
+            </aside>
           </main>
         </div>
       );
     };
 
-    // 將 React 元件渲染到畫面上
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
 </html>

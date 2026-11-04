@@ -6,7 +6,7 @@
   <title>因式分解大師</title>
   
   <!-- 引入 Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   <!-- 設定 Tailwind 自訂動畫 -->
   <script>
     tailwind.config = {
@@ -28,14 +28,14 @@
   </script>
 
   <!-- 引入 React 與 ReactDOM -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   
   <!-- 引入 Babel -->
   <script crossorigin src="https://unpkg.com/@babel/standalone@7.23.0/babel.min.js"></script>
 
   <!-- 引入 Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.469.0"></script>
 
   <!-- 引入 Firebase Compat (v8/v9 相容版) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -388,12 +388,14 @@
           return r;
         };
 
+        const gcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) [x, y] = [y, x % y]; return x; };
+
         let a1, b1, a2, b2;
         let attempts = 0;
         let isUnique = false;
         let signature = "";
 
-        while (!isUnique && attempts < 20) {
+        while (!isUnique && attempts < 200) {
           if (currentLevel === 1) {
             a1 = 1; a2 = 1;
             b1 = nonZeroRand(-9, 9); b2 = nonZeroRand(-9, 9);
@@ -404,6 +406,13 @@
             a1 = rand(2, 5); a2 = rand(2, 6);
             b1 = nonZeroRand(-9, 9); b2 = nonZeroRand(-9, 9);
           }
+          attempts++;
+
+          // 每個因式本身不能再提出公因數（例如 2x + 4），
+          // 否則整個多項式會有公因數，正確答案應先提公因數，但這裡的作答格式寫不出來
+          if (gcd(a1, b1) > 1 || gcd(a2, b2) > 1) continue;
+          // 第 2 級至少要有一個首項係數不是 1，和第 1 級區隔
+          if (currentLevel === 2 && a1 * a2 === 1) continue;
 
           let p1 = { a: a1, b: b1 };
           let p2 = { a: a2, b: b2 };
@@ -418,7 +427,6 @@
           if (!recentProblemsRef.current.includes(signature)) {
             isUnique = true;
           }
-          attempts++;
         }
 
         recentProblemsRef.current.push(signature);
@@ -1050,9 +1058,9 @@
                    <div className="mt-6 pt-6 border-t border-dashed border-slate-200 animate-slide-down">
                      <div className="flex justify-center items-center font-mono text-lg text-slate-600 bg-slate-50 p-6 rounded-xl relative">
                         <div className="relative grid grid-cols-2 gap-x-12 gap-y-6 z-10">
-                           <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a1}x</div>
+                           <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a1 === 1 ? '' : problem.factors.a1}x</div>
                            <div className="text-left font-bold text-emerald-600 text-xl">{problem.factors.b1 > 0 ? `+${problem.factors.b1}` : problem.factors.b1}</div>
-                           <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a2}x</div>
+                           <div className="text-right font-bold text-indigo-600 text-xl">{problem.factors.a2 === 1 ? '' : problem.factors.a2}x</div>
                            <div className="text-left font-bold text-emerald-600 text-xl">{problem.factors.b2 > 0 ? `+${problem.factors.b2}` : problem.factors.b2}</div>
                         </div>
                         <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ top: '0', left: '0' }}>
