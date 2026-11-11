@@ -127,6 +127,354 @@
       return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
+    // ==========================================
+    // 出題（單人與雙人共用）
+    // ==========================================
+    const gcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) [x, y] = [y, x % y]; return x; };
+
+    // recent：最近出過的題目，避免重複（會被更新）
+    const makeProblem = (currentLevel, recent) => {
+      const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+      const nonZeroRand = (min, max) => { let r = 0; while (r === 0) r = rand(min, max); return r; };
+
+      let a1, b1, a2, b2;
+      let attempts = 0;
+      let isUnique = false;
+      let signature = "";
+
+      while (!isUnique && attempts < 200) {
+        if (currentLevel === 1) {
+          a1 = 1; a2 = 1;
+          b1 = nonZeroRand(-9, 9); b2 = nonZeroRand(-9, 9);
+        } else if (currentLevel === 2) {
+          a1 = rand(1, 3); a2 = rand(1, 4);
+          b1 = nonZeroRand(-5, 5); b2 = nonZeroRand(-5, 5);
+        } else {
+          a1 = rand(2, 5); a2 = rand(2, 6);
+          b1 = nonZeroRand(-9, 9); b2 = nonZeroRand(-9, 9);
+        }
+        attempts++;
+
+        // 每個因式本身不能再提出公因數（例如 2x + 4），
+        // 否則整個多項式會有公因數，正確答案應先提公因數，但這裡的作答格式寫不出來
+        if (gcd(a1, b1) > 1 || gcd(a2, b2) > 1) continue;
+        // 第 2 級至少要有一個首項係數不是 1，和第 1 級區隔
+        if (currentLevel === 2 && a1 * a2 === 1) continue;
+        // 第 2、3 級偶爾出現首項係數為負的題目（約 15%）
+        if (currentLevel >= 2 && Math.random() < 0.15) a1 = -a1;
+
+        let p1 = { a: a1, b: b1 };
+        let p2 = { a: a2, b: b2 };
+        if (p1.a > p2.a || (p1.a === p2.a && p1.b > p2.b)) [p1, p2] = [p2, p1];
+        signature = `${p1.a},${p1.b}|${p2.a},${p2.b}`;
+        if (!recent.includes(signature)) isUnique = true;
+      }
+
+      recent.push(signature);
+      if (recent.length > 8) recent.shift();
+
+      return { A: a1 * a2, B: a1 * b2 + a2 * b1, C: b1 * b2, factors: { a1, b1, a2, b2 } };
+    };
+
+    // 學生的作答是否正確（展開後三個係數都要一樣）
+    const isAnswerCorrect = (input, problem) => {
+      const { a1, b1, a2, b2 } = input;
+      const lead = (v) => v === '' ? 1 : v === '-' ? -1 : parseInt(v);
+      const cst = (v) => v === '' ? 0 : parseInt(v);
+      const A1 = lead(a1), B1 = cst(b1), A2 = lead(a2), B2 = cst(b2);
+      return A1 * A2 === problem.A && A1 * B2 + A2 * B1 === problem.B && B1 * B2 === problem.C;
+    };
+
+    // (2x + 3)(x − 1) 這種寫法
+    const formatFactors = ({ a1, b1, a2, b2 }) => {
+      const t = (a, b) => `(${a === 1 ? '' : a === -1 ? '-' : a}x ${b < 0 ? '−' : '+'} ${Math.abs(b)})`;
+      return t(a1, b1) + t(a2, b2);
+    };
+
+    // 學生的作答寫成文字（記錄答錯用）
+    const formatInput = ({ a1, b1, a2, b2 }) => {
+      const term = (a, b) => `(${a === '' || a === '1' ? '' : a === '-' || a === '-1' ? '-' : a}x${b === '' ? '' : (b.startsWith('-') ? ' − ' + b.slice(1) : ' + ' + b)})`;
+      return (a1 + b1 + a2 + b2) === '' ? '未作答' : term(a1, b1) + term(a2, b2);
+    };
+
+    // ==========================================
+    // 雙人對戰（同一台裝置）
+    // ==========================================
+    const DUEL_RACE_ROUNDS = 10;                 // 搶答賽題數
+    const DUEL_RACE_LIMIT = { 1: 30, 2: 45, 3: 60 }; // 搶答賽每題秒數
+    const DUEL_RACE_PENALTY_MS = 2500;           // 搶答答錯暫停
+    const DUEL_SCORE_SECONDS = 90;               // 計分賽總秒數
+    const DUEL_SCORE_WRONG_MS = 1800;            // 計分賽答錯時顯示正解的時間
+    const FIELD_ORDER = ['a1', 'b1', 'a2', 'b2'];
+    const emptyInput = () => ({ a1: '', b1: '', a2: '', b2: '' });
+    const PLAYER_STYLE = [
+      { ring: 'border-indigo-500', text: 'text-indigo-700', bg: 'bg-indigo-600', soft: 'bg-indigo-50', field: 'border-indigo-600 text-indigo-700' },
+      { ring: 'border-orange-500', text: 'text-orange-700', bg: 'bg-orange-500', soft: 'bg-orange-50', field: 'border-orange-500 text-orange-700' },
+    ];
+
+    const DuelGame = ({ level, rule, names, faceToFace, onExit, onRestart }) => {
+      const recentRef = useRef([]);
+      const newPlayer = () => ({ input: emptyInput(), field: 'a1', score: 0, correct: 0, wrong: 0, locked: false, flash: null, problem: null, wrongList: [], token: 0 });
+      const [players, setPlayers] = useState(() => [newPlayer(), newPlayer()]);
+      const [phase, setPhase] = useState('countdown');   // countdown → play → ended
+      const [countdown, setCountdown] = useState(3);
+      const [shared, setShared] = useState(null);         // 搶答賽的共同題目
+      const [round, setRound] = useState(1);
+      const [roundResult, setRoundResult] = useState(null); // 搶答賽這一題的結果 { winner: 0 | 1 | null }
+      const [timeLeft, setTimeLeft] = useState(rule === 'race' ? DUEL_RACE_LIMIT[level] : DUEL_SCORE_SECONDS);
+      const roundDoneRef = useRef(false);
+      const timeoutsRef = useRef([]);
+      const later = (fn, ms) => { timeoutsRef.current.push(setTimeout(fn, ms)); };
+      useEffect(() => () => timeoutsRef.current.forEach(clearTimeout), []);
+
+      const update = (pi, fn) => setPlayers((ps) => ps.map((p, i) => (i === pi ? { ...p, ...fn(p) } : p)));
+
+      // 3、2、1 倒數後開始
+      useEffect(() => {
+        if (phase !== 'countdown') return;
+        if (countdown === 0) {
+          if (rule === 'race') setShared(makeProblem(level, recentRef.current));
+          else setPlayers((ps) => ps.map((p) => ({ ...p, problem: makeProblem(level, recentRef.current) })));
+          setPhase('play');
+          return;
+        }
+        const t = setTimeout(() => setCountdown((c) => c - 1), 800);
+        return () => clearTimeout(t);
+      }, [phase, countdown]);
+
+      // 計時
+      useEffect(() => {
+        if (phase !== 'play' || roundResult) return;
+        if (timeLeft <= 0) {
+          if (rule === 'race') finishRound(null);
+          else setPhase('ended');
+          return;
+        }
+        const t = setTimeout(() => setTimeLeft((v) => v - 1), 1000);
+        return () => clearTimeout(t);
+      }, [phase, timeLeft, roundResult]);
+
+      // 搶答賽：這一題結束（winner 為 null 代表時間到沒人答對）
+      const finishRound = (winner) => {
+        if (roundDoneRef.current) return;
+        roundDoneRef.current = true;
+        setRoundResult({ winner });
+        later(() => {
+          if (round >= DUEL_RACE_ROUNDS) { setPhase('ended'); return; }
+          setRound((r) => r + 1);
+          setShared(makeProblem(level, recentRef.current));
+          setPlayers((ps) => ps.map((p) => ({ ...p, input: emptyInput(), field: 'a1', locked: false, flash: null, token: p.token + 1 })));
+          setTimeLeft(DUEL_RACE_LIMIT[level]);
+          setRoundResult(null);
+          roundDoneRef.current = false;
+        }, 2200);
+      };
+
+      const submit = (pi) => {
+        const p = players[pi];
+        if (phase !== 'play' || p.locked) return;
+        if (rule === 'race') {
+          if (roundResult || roundDoneRef.current) return;
+          if (isAnswerCorrect(p.input, shared)) {
+            update(pi, (q) => ({ score: q.score + 1, correct: q.correct + 1, flash: 'correct' }));
+            finishRound(pi);
+          } else {
+            const token = p.token + 1;
+            update(pi, (q) => ({
+              wrong: q.wrong + 1, locked: true, flash: 'wrong', input: emptyInput(), field: 'a1', token,
+              wrongList: [...q.wrongList, `${formatPolynomial(shared.A, shared.B, shared.C)}（作答 ${formatInput(q.input)}）`],
+            }));
+            // 只解除「這一次」的暫停；換題後就不再作用
+            later(() => update(pi, (q) => (q.token === token ? { locked: false, flash: null } : {})), DUEL_RACE_PENALTY_MS);
+          }
+        } else {
+          const prob = p.problem;
+          if (isAnswerCorrect(p.input, prob)) {
+            update(pi, (q) => ({ score: q.score + 1, correct: q.correct + 1, flash: 'correct', locked: true }));
+            later(() => update(pi, () => ({ problem: makeProblem(level, recentRef.current), input: emptyInput(), field: 'a1', locked: false, flash: null })), 450);
+          } else {
+            update(pi, (q) => ({
+              wrong: q.wrong + 1, locked: true, flash: 'wrong',
+              wrongList: [...q.wrongList, `${formatPolynomial(prob.A, prob.B, prob.C)}（作答 ${formatInput(q.input)}）`],
+            }));
+            later(() => update(pi, () => ({ problem: makeProblem(level, recentRef.current), input: emptyInput(), field: 'a1', locked: false, flash: null })), DUEL_SCORE_WRONG_MS);
+          }
+        }
+      };
+
+      // 按鍵：和單人模式相同的輸入規則
+      const press = (pi, key) => {
+        const p = players[pi];
+        if (phase !== 'play' || p.locked || (rule === 'race' && roundResult)) return;
+        if (key === 'ENTER') { submit(pi); return; }
+        if (key === 'TAB') { update(pi, (q) => ({ field: FIELD_ORDER[(FIELD_ORDER.indexOf(q.field) + 1) % 4] })); return; }
+        if (key === 'DEL') { update(pi, (q) => ({ input: { ...q.input, [q.field]: q.input[q.field].slice(0, -1) } })); return; }
+        update(pi, (q) => {
+          const cur = q.input[q.field];
+          if (key === '-' && cur.includes('-')) return {};
+          if (cur.length >= 3) return {};
+          const v = cur + key;
+          const advance = /^-?[0-9]$/.test(v) && FIELD_ORDER.indexOf(q.field) < 3;
+          return { input: { ...q.input, [q.field]: v }, field: advance ? FIELD_ORDER[FIELD_ORDER.indexOf(q.field) + 1] : q.field };
+        });
+      };
+
+      // ---------- 結果畫面 ----------
+      if (phase === 'ended') {
+        const [s0, s1] = [players[0].score, players[1].score];
+        const winner = s0 === s1 ? null : s0 > s1 ? 0 : 1;
+        return (
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans text-slate-800">
+            <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl max-w-2xl w-full text-center animate-fade-in">
+              <Trophy className="text-yellow-400 mx-auto mb-3" size={56} />
+              <h2 className="text-3xl font-bold mb-1">{winner === null ? '平手！' : `${names[winner]} 獲勝！`}</h2>
+              <p className="text-slate-500 mb-6">{rule === 'race' ? `搶答賽 ${DUEL_RACE_ROUNDS} 題` : `計分賽 ${DUEL_SCORE_SECONDS} 秒`}・Level {level}</p>
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                {players.map((p, i) => {
+                  const total = p.correct + p.wrong;
+                  return (
+                    <div key={i} className={`rounded-2xl border-4 p-4 ${PLAYER_STYLE[i].ring} ${winner === i ? PLAYER_STYLE[i].soft : 'bg-white'}`}>
+                      <div className={`font-bold ${PLAYER_STYLE[i].text}`}>{names[i]}{winner === i ? ' 👑' : ''}</div>
+                      <div className="text-5xl font-black my-2">{p.score}</div>
+                      <div className="text-xs text-slate-500">答對 {p.correct}・答錯 {p.wrong}・正確率 {total ? Math.round(p.correct / total * 100) : 0}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {players.some((p) => p.wrongList.length) && (
+                <div className="text-left bg-slate-50 rounded-2xl p-4 mb-6 space-y-3">
+                  <div className="font-bold text-slate-700 text-sm">答錯的題目（可以一起討論）</div>
+                  {players.map((p, i) => p.wrongList.length > 0 && (
+                    <div key={i}>
+                      <div className={`text-xs font-bold mb-1 ${PLAYER_STYLE[i].text}`}>{names[i]}</div>
+                      <ul className="text-sm text-slate-600 space-y-0.5 font-mono">
+                        {p.wrongList.map((w, j) => <li key={j}>・{w}</li>)}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={onExit} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold">回選單</button>
+                <button onClick={onRestart} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold">再來一局</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ---------- 對戰畫面 ----------
+      const field = (pi, f, ph) => {
+        const p = players[pi];
+        const on = p.field === f;
+        return (
+          <button key={f} onPointerDown={(e) => { e.preventDefault(); if (!p.locked) update(pi, () => ({ field: f })); }}
+            className={`w-10 sm:w-12 text-center border-b-2 font-bold text-lg sm:text-xl ${on ? PLAYER_STYLE[pi].field : 'border-slate-300 text-slate-700'}`}>
+            {p.input[f] || <span className="text-slate-300">{ph}</span>}
+          </button>
+        );
+      };
+
+      const panel = (pi) => {
+        const p = players[pi];
+        const st = PLAYER_STYLE[pi];
+        const prob = rule === 'race' ? shared : p.problem;
+        const keys = ['1', '2', '3', 'DEL', '4', '5', '6', '-', '7', '8', '9', 'TAB', '0', 'ENTER'];
+        const label = (k) => k === 'DEL' ? '⌫' : k === 'TAB' ? '下一格' : k === 'ENTER' ? '送出' : k;
+        const won = rule === 'race' && roundResult && roundResult.winner === pi;
+        const lost = rule === 'race' && roundResult && roundResult.winner !== pi;
+        const rotate = faceToFace && pi === 0;
+        return (
+          <div key={pi} className={`relative flex flex-col rounded-2xl border-4 ${st.ring} bg-white p-2.5 sm:p-3 select-none overflow-hidden min-h-0 h-full`}
+            style={rotate ? { transform: 'rotate(180deg)' } : undefined}>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className={`font-bold ${st.text} truncate`}>{names[pi]}</div>
+              <div className={`text-white font-black text-xl px-3 rounded-lg ${st.bg}`}>{p.score}</div>
+            </div>
+            <div className="text-center font-mono font-bold text-2xl sm:text-3xl text-slate-800 py-1.5 sm:py-3">
+              {prob ? formatPolynomial(prob.A, prob.B, prob.C) : '…'}
+            </div>
+            <div className="flex items-center justify-center gap-1 text-lg sm:text-xl text-slate-600 mb-2 sm:mb-3">
+              ({field(pi, 'a1', 'a')}x +{field(pi, 'b1', 'b')})
+              ({field(pi, 'a2', 'c')}x +{field(pi, 'b2', 'd')})
+            </div>
+            <div className="grid grid-cols-4 gap-1.5 mt-auto">
+              {keys.map((k) => (
+                <button key={k}
+                  onPointerDown={(e) => { e.preventDefault(); press(pi, k); }}
+                  style={{ touchAction: 'manipulation' }}
+                  className={`rounded-lg py-2 sm:py-3 font-bold text-lg active:translate-y-[1px] ${
+                    k === 'ENTER' ? `col-span-3 text-white ${st.bg}` :
+                    k === 'TAB' ? `text-sm ${st.soft} ${st.text}` :
+                    'bg-slate-100 text-slate-700'}`}>
+                  {label(k)}
+                </button>
+              ))}
+            </div>
+
+            {/* 回饋遮罩 */}
+            {(p.flash === 'wrong' || won || lost || p.flash === 'correct') && (
+              <div className={`absolute inset-0 flex flex-col items-center justify-center text-center p-4 ${
+                p.flash === 'wrong' && !roundResult ? 'bg-rose-500/90' :
+                won || (rule === 'score' && p.flash === 'correct') ? 'bg-emerald-500/90' : 'bg-slate-700/85'} text-white`}>
+                {rule === 'race' && roundResult ? (
+                  <>
+                    <div className="text-3xl font-black mb-2">{won ? '搶到了！+1' : roundResult.winner === null ? '時間到' : '被搶走了'}</div>
+                    <div className="font-mono text-xl">{formatFactors(shared.factors)}</div>
+                  </>
+                ) : p.flash === 'correct' ? (
+                  <div className="text-4xl font-black">✓ +1</div>
+                ) : (
+                  <>
+                    <div className="text-3xl font-black mb-2">✗ 答錯了</div>
+                    {rule === 'race'
+                      ? <div className="text-sm">暫停一下，再試一次</div>
+                      : <div className="font-mono text-xl">正解：{formatFactors(p.problem.factors)}</div>}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const bar = (
+        <div className="flex items-center justify-between gap-3 px-1 py-1">
+          <button onClick={onExit} className="text-sm font-bold text-slate-500 hover:text-rose-600 whitespace-nowrap">✕ 結束</button>
+          <div className="text-center">
+            <div className="text-xs font-bold text-slate-500">{rule === 'race' ? `搶答賽・第 ${round} / ${DUEL_RACE_ROUNDS} 題` : '計分賽'}・Lv.{level}</div>
+            <div className={`font-mono font-black text-2xl ${timeLeft <= 5 ? 'text-rose-600 animate-pulse' : 'text-slate-800'}`}>{timeLeft}s</div>
+          </div>
+          <div className="text-sm font-bold text-slate-400 whitespace-nowrap">{players[0].score} : {players[1].score}</div>
+        </div>
+      );
+
+      return (
+        <div className="h-[100dvh] bg-slate-100 p-2 sm:p-3 font-sans text-slate-800 flex flex-col gap-2 overflow-hidden">
+          {faceToFace ? (
+            <>
+              <div className="flex-1 min-h-0 flex flex-col">{panel(0)}</div>
+              {bar}
+              <div className="flex-1 min-h-0 flex flex-col">{panel(1)}</div>
+            </>
+          ) : (
+            <>
+              {bar}
+              <div className="flex-1 min-h-0 grid grid-rows-2 md:grid-rows-1 md:grid-cols-2 gap-2">
+                {panel(0)}
+                {panel(1)}
+              </div>
+            </>
+          )}
+          {phase === 'countdown' && (
+            <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50">
+              <div className="text-white text-8xl font-black animate-pulse">{countdown > 0 ? countdown : '開始！'}</div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
     const FactorizationGame = () => {
       const [systemError, setSystemError] = useState(null);
       const isAuthReady = true;
@@ -164,6 +512,12 @@
       const wrongListRef = useRef([]); // 這一局答錯的題目（含學生的作答）
 
       const [leaderboardData, setLeaderboardData] = useState([]);
+
+      // 雙人對戰設定
+      const [duelRule, setDuelRule] = useState('race');
+      const [duelNames, setDuelNames] = useState(['', '']);
+      const [faceToFace, setFaceToFace] = useState(false);
+      const [duelKey, setDuelKey] = useState(0);
 
       const timerRef = useRef(null);
       const PRACTICE_LIMITS = { 1: 20, 2: 40, 3: 60 };
@@ -318,73 +672,12 @@
       // 記下答錯（或超時）的題目與學生的作答
       const recordWrong = (reason) => {
         if (!problem) return;
-        const { a1, b1, a2, b2 } = userInput;
-        const term = (a, b) => `(${a === '' || a === '1' ? '' : a === '-' || a === '-1' ? '-' : a}x${b === '' ? '' : (b.startsWith('-') ? ' - ' + b.slice(1) : ' + ' + b)})`;
-        const answered = (a1 + b1 + a2 + b2) === '' ? '未作答' : term(a1, b1) + term(a2, b2);
+        const answered = formatInput(userInput);
         wrongListRef.current.push(`${formatPolynomial(problem.A, problem.B, problem.C)}（${reason === 'timeout' ? '超時，' : ''}作答 ${answered}）`);
       };
 
       const generateProblem = (currentMode = gameMode, currentLevel = level) => {
-        const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-        const nonZeroRand = (min, max) => {
-          let r = 0;
-          while (r === 0) r = rand(min, max);
-          return r;
-        };
-
-        const gcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) [x, y] = [y, x % y]; return x; };
-
-        let a1, b1, a2, b2;
-        let attempts = 0;
-        let isUnique = false;
-        let signature = "";
-
-        while (!isUnique && attempts < 200) {
-          if (currentLevel === 1) {
-            a1 = 1; a2 = 1;
-            b1 = nonZeroRand(-9, 9); b2 = nonZeroRand(-9, 9);
-          } else if (currentLevel === 2) {
-            a1 = rand(1, 3); a2 = rand(1, 4);
-            b1 = nonZeroRand(-5, 5); b2 = nonZeroRand(-5, 5);
-          } else {
-            a1 = rand(2, 5); a2 = rand(2, 6);
-            b1 = nonZeroRand(-9, 9); b2 = nonZeroRand(-9, 9);
-          }
-          attempts++;
-
-          // 每個因式本身不能再提出公因數（例如 2x + 4），
-          // 否則整個多項式會有公因數，正確答案應先提公因數，但這裡的作答格式寫不出來
-          if (gcd(a1, b1) > 1 || gcd(a2, b2) > 1) continue;
-          // 第 2 級至少要有一個首項係數不是 1，和第 1 級區隔
-          if (currentLevel === 2 && a1 * a2 === 1) continue;
-          // 第 2、3 級偶爾出現首項係數為負的題目（約 15%）
-          if (currentLevel >= 2 && Math.random() < 0.15) a1 = -a1;
-
-          let p1 = { a: a1, b: b1 };
-          let p2 = { a: a2, b: b2 };
-          
-          let swap = false;
-          if (p1.a > p2.a) swap = true;
-          else if (p1.a === p2.a && p1.b > p2.b) swap = true;
-
-          if (swap) [p1, p2] = [p2, p1];
-          signature = `${p1.a},${p1.b}|${p2.a},${p2.b}`;
-
-          if (!recentProblemsRef.current.includes(signature)) {
-            isUnique = true;
-          }
-        }
-
-        recentProblemsRef.current.push(signature);
-        if (recentProblemsRef.current.length > 8) { 
-          recentProblemsRef.current.shift();
-        }
-
-        const A = a1 * a2;
-        const B = a1 * b2 + a2 * b1;
-        const C = b1 * b2;
-
-        setProblem({ A, B, C, factors: { a1, b1, a2, b2 } });
+        setProblem(makeProblem(currentLevel, recentProblemsRef.current));
         setUserInput({ a1: '', b1: '', a2: '', b2: '' });
         setActiveField('a1'); 
         setFeedback(null);
@@ -726,6 +1019,69 @@
         );
       }
 
+      if (gameState === 'duel') {
+        const names = duelNames.map((n, i) => n.trim() || `玩家 ${i + 1}`);
+        return (
+          <DuelGame key={duelKey} level={level} rule={duelRule} names={names} faceToFace={faceToFace}
+            onExit={() => setGameState('duelSetup')} onRestart={() => setDuelKey((k) => k + 1)} />
+        );
+      }
+
+      if (gameState === 'duelSetup') {
+        const card = (on) => `flex-1 text-left p-3 rounded-xl border-2 transition-all ${on ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`;
+        return (
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans text-slate-800">
+            <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl max-w-md w-full border-b-8 border-indigo-100">
+              <h1 className="text-2xl font-bold text-indigo-800 mb-1 text-center">雙人對戰</h1>
+              <p className="text-sm text-slate-500 mb-5 text-center">兩人共用這台裝置，各自用自己那半邊的按鍵作答</p>
+
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                {[0, 1].map((i) => (
+                  <label key={i} className={`text-xs font-bold ${PLAYER_STYLE[i].text}`}>玩家 {i + 1}
+                    <input value={duelNames[i]} maxLength={12}
+                      onChange={(e) => setDuelNames((ns) => ns.map((n, j) => (j === i ? e.target.value : n)))}
+                      placeholder={i === 0 && playerName ? playerName : `玩家 ${i + 1}`}
+                      className={`mt-1 w-full bg-slate-50 border-2 rounded-xl p-2.5 text-center font-bold text-slate-800 focus:outline-none ${PLAYER_STYLE[i].ring}`} />
+                  </label>
+                ))}
+              </div>
+
+              <div className="text-xs font-bold text-slate-500 mb-2">比賽規則</div>
+              <div className="flex gap-2 mb-5">
+                <button onClick={() => setDuelRule('race')} className={card(duelRule === 'race')}>
+                  <div className="font-bold text-slate-800">⚡ 搶答賽</div>
+                  <div className="text-xs text-slate-500 mt-1">同一題，先答對得分，共 {DUEL_RACE_ROUNDS} 題。答錯暫停 2.5 秒。</div>
+                </button>
+                <button onClick={() => setDuelRule('score')} className={card(duelRule === 'score')}>
+                  <div className="font-bold text-slate-800">⏱ 計分賽</div>
+                  <div className="text-xs text-slate-500 mt-1">{DUEL_SCORE_SECONDS} 秒內各自答題，比誰答對得多。</div>
+                </button>
+              </div>
+
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-xs font-bold text-slate-500">難度</span>
+                <div className="flex gap-1">
+                  {[1, 2, 3].map((l) => (
+                    <button key={l} onClick={() => setLevel(l)}
+                      className={`w-9 h-9 rounded-lg text-sm font-bold ${level === l ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2 text-sm text-slate-600 mb-6 cursor-pointer">
+                <input type="checkbox" checked={faceToFace} onChange={(e) => setFaceToFace(e.target.checked)} className="w-4 h-4 mt-0.5 accent-indigo-600" />
+                <span>面對面坐（平板平放在桌上時使用，上方玩家的畫面會倒過來）</span>
+              </label>
+
+              <button onClick={() => { setDuelKey((k) => k + 1); setGameState('duel'); }}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-200">開始對戰</button>
+              <button onClick={() => setGameState('menu')} className="w-full mt-2 py-2 text-slate-500 font-bold">返回選單</button>
+              <p className="text-[11px] text-slate-400 mt-3 text-center">建議用平板或觸控螢幕，兩人才能同時按。對戰成績不會記錄到排行榜。</p>
+            </div>
+          </div>
+        );
+      }
+
       if (gameState === 'menu' || gameState === 'leaderboard') {
         return (
           <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans text-slate-800">
@@ -768,6 +1124,14 @@
                       <div>
                         <div className="font-bold text-rose-900">生存挑戰模式</div>
                         <div className="text-xs text-slate-500">3 條命，<span className="text-rose-600 font-bold">限時作答</span>，連對 5 題回血</div>
+                      </div>
+                    </button>
+
+                    <button onClick={() => { setDuelNames((ns) => [ns[0] || playerName, ns[1]]); setGameState('duelSetup'); }} className="w-full bg-white border-2 border-emerald-100 hover:border-emerald-500 hover:bg-emerald-50 p-3 rounded-xl flex items-center gap-4 transition-all group text-left">
+                      <div className="bg-emerald-500 text-white p-3 rounded-lg group-hover:scale-110 transition-transform"><User size={20}/></div>
+                      <div>
+                        <div className="font-bold text-emerald-900">雙人對戰模式</div>
+                        <div className="text-xs text-slate-500">同一台裝置兩人對戰：搶答賽或計分賽</div>
                       </div>
                     </button>
                   </div>
